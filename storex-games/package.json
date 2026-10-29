@@ -1,0 +1,14 @@
+{
+  "name": "storex-games",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Loja virtual StoreX Games (HTML/CSS/JS + Supabase + InfinitePay)",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "dev": "node server/dev.js",
+    "demo": "node demo/demo.js",
+    "test": "node --test \"tests/**/*.test.js\"",
+    "check": "node tests/helpers/syntax-check.js"
+  }
+}
