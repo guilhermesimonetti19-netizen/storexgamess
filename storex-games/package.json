@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Loja virtual StoreX Games (HTML/CSS/JS + Supabase + InfinitePay)",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "node server/dev.js",
     "demo": "node demo/demo.js",
