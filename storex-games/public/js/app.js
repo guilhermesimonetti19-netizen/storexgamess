@@ -15,7 +15,7 @@ function layout() {
   const setAcct = () => { acct.href = isLoggedIn() ? '/conta' : '/entrar'; acctLabel.textContent = isLoggedIn() ? 'Minha conta' : 'Entrar'; }; setAcct(); onAuth(setAcct);
   const burger = h('button', { class: 'icon-btn burger', type: 'button', 'aria-label': 'Abrir menu', 'aria-expanded': 'false', 'aria-controls': 'nav', onclick: e => { const o = nav.classList.toggle('open'); e.currentTarget.setAttribute('aria-expanded', String(o)); document.body.classList.toggle('nav-open', o); } }, icon('menu', { size: 24 }));
   const ticker = items => h('ul', { class: 'ticker-track' }, items.map(([ic, t]) => h('li', {}, icon(ic, { size: 16 }), t)));
-  const tk = [['shield', 'Checkout seguro InfinitePay'], ['whatsapp', 'Entrega manual via WhatsApp'], ['lock', 'Instruções liberadas após a confirmação do pagamento'], ['headset', 'Suporte direto no WhatsApp']];
+  const tk = [['shield', 'Checkout seguro InfinitePay'], ['shield', 'Entrega automática'], ['lock', 'Instruções liberadas após a confirmação do pagamento'], ['headset', 'Suporte direto no WhatsApp']];
   $('#header').replaceChildren(
     h('div', { class: 'ticker', role: 'region', 'aria-label': 'Avisos da loja' }, ticker(tk), (() => { const d = ticker(tk); d.setAttribute('aria-hidden', 'true'); return d; })()),
     h('div', { class: 'hdr' }, h('div', { class: 'wrap hdr-in' }, burger,
