@@ -477,8 +477,7 @@ export function createApp({
       if (!SLUG_RE.test(o.slug || "")) throw bad("Slug inválido.");
     }
     for (const [k, lab, max] of [
-      ["short_description", "Descrição curta", 300],
-      ["long_description", "Descrição completa", 8000],
+      ["long_description", "Descrição", 8000],
       ["platform", "Plataforma", 60],
       ["requirements", "Requisitos", 1000],
       ["region", "Região", 100],
@@ -521,13 +520,9 @@ export function createApp({
     if (o.track_stock === false) o.stock = null;
     return o;
   };
+  // Pós-compra: apenas o campo de instruções.
   const DF = (b) => ({
     instructions: str(b.instructions, "Instruções", { max: 4000 }),
-    steps: str(b.steps, "Passos", { max: 2000 }),
-    required_info: str(b.required_info, "Dados necessários", { max: 1000 }),
-    eta_text: str(b.eta_text, "Prazo", { max: 200 }),
-    notes: str(b.notes, "Observações", { max: 1000 }),
-    whatsapp_message: str(b.whatsapp_message, "Mensagem", { max: 500 }),
   });
   const dbErr = (e) => {
     if (e.code === "23505")
@@ -1005,8 +1000,21 @@ export function createApp({
           throw bad("URL do Instagram deve começar com https://");
         if (k.startsWith("alert_") && !/^\d{1,4}$/.test(v))
           throw bad(`${k} deve ser número.`);
+        if (k === "combo_enabled" && !/^[01]$/.test(v))
+          throw bad("combo_enabled inválido.");
+        if (/^combo_(qty|unit_cents|price_cents)$/.test(k) && !/^\d{1,8}$/.test(v))
+          throw bad(`${k} deve ser número.`);
         rows.push({ key: k, value: v, updated_at: now().toISOString() });
       }
+    if (b.combo_enabled === "1") {
+      const q = Number(b.combo_qty),
+        u = Number(b.combo_unit_cents),
+        p = Number(b.combo_price_cents);
+      if (!(Number.isInteger(q) && q >= 2 && q <= 10 && u > 0 && p > 0 && p < q * u))
+        throw bad(
+          "Combo inválido: o preço do combo deve ser menor que quantidade × preço unitário.",
+        );
+    }
     if (rows.length) await db.upsert("store_settings", rows, "key");
     await audit(ctx, a, "settings.update", "settings", null, {
       keys: rows.map((r) => r.key),

@@ -1,6 +1,7 @@
 import { HttpError, bad, uuid, int, str, randomRef, UUID_RE } from './util.js';
 import { createCheckoutLink, isConfigured } from './infinitepay.js';
 import { loadSettings, waLink } from './settings.js';
+import { COMBO_KEYS, comboConfig, applyCombo, checkoutItems } from './combo.js';
 
 const KEY_RE = /^[A-Za-z0-9_-]{8,64}$/;
 
@@ -15,7 +16,7 @@ export function normalizeItems(raw) {
   return [...m].map(([productId, quantity]) => ({ productId, quantity }));
 }
 
-// Preços SEMPRE do banco (view catalog_products); nada do navegador é aceito como preço/total.
+// Preços e combo SEMPRE calculados no servidor (view catalog_products + store_settings); nada do navegador é aceito como preço/total.
 export async function createOrder(ctx, user, body) {
   const key = body?.idempotencyKey;
   if (typeof key !== 'string' || !KEY_RE.test(key)) throw bad('Chave de idempotência inválida.');
@@ -38,13 +39,18 @@ export async function createOrder(ctx, user, body) {
     const d = dById.get(p.id) || {};
     lines.push({ product_id: p.id, name_snapshot: p.name, description_snapshot: p.short_description, category_snapshot: p.category_name, platform_snapshot: p.platform,
       quantity: it.quantity, unit_price_cents: unit, subtotal_cents: sub, track_stock: Boolean(p.track_stock),
-      delivery_snapshot: { instructions: d.instructions ?? null, steps: d.steps ?? null, required_info: d.required_info ?? null, eta_text: d.eta_text ?? null, notes: d.notes ?? null, whatsapp_message: d.whatsapp_message ?? null } });
+      delivery_snapshot: { instructions: d.instructions ?? null } });
   }
   if (!(subtotal > 0)) throw bad('Total inválido.');
+  const cfg = comboConfig(await loadSettings(ctx.db, COMBO_KEYS));
+  const { groups, discount } = applyCombo(lines.map(l => ({ unit: l.unit_price_cents, quantity: l.quantity })), cfg);
+  const total = subtotal - discount;
+  if (!(total > 0)) throw bad('Total inválido.');
   const ref = randomRef();
   let order;
   try {
-    [order] = await ctx.db.insert('orders', [{ id: crypto.randomUUID(), public_ref: ref, order_nsu: ref, user_id: user.id, idempotency_key: key, subtotal_cents: subtotal, total_cents: subtotal }]);
+    [order] = await ctx.db.insert('orders', [{ id: crypto.randomUUID(), public_ref: ref, order_nsu: ref, user_id: user.id, idempotency_key: key,
+      subtotal_cents: subtotal, discount_cents: discount, combo_snapshot: groups ? { ...cfg, groups } : null, total_cents: total }]);
   } catch (e) { // clique duplicado concorrente: devolve o pedido já criado
     if (e.code === '23505') { const r = await ctx.db.select('orders', { filters: { user_id: 'eq.' + user.id, idempotency_key: 'eq.' + key }, limit: 1 }); if (r.rows[0]) return r.rows[0]; }
     throw e;
@@ -62,7 +68,7 @@ export async function ensureCheckout(ctx, order) {
   const t = ctx.env.WEBHOOK_SECRET ? '?t=' + encodeURIComponent(ctx.env.WEBHOOK_SECRET) : '';
   const url = await createCheckoutLink(ctx.env, ctx.fetch, {
     orderNsu: order.order_nsu, redirectUrl: `${base}/pedido/${order.public_ref}`, webhookUrl: `${base}/api/webhooks/infinitepay${t}`,
-    items: items.map(i => ({ quantity: i.quantity, price: i.unit_price_cents, description: i.name_snapshot })) });
+    items: checkoutItems(items.map(i => ({ name: i.name_snapshot, unit: i.unit_price_cents, quantity: i.quantity })), order.combo_snapshot) });
   await ctx.db.update('orders', { id: 'eq.' + order.id }, { checkout_url: url });
   return url;
 }
@@ -73,10 +79,10 @@ export async function serializeOrder(ctx, order, items) {
   const settings = paid ? await loadSettings(ctx.db) : {};
   const out = {
     ref: order.public_ref, status: order.status, paymentStatus: order.payment_status, deliveryStatus: order.delivery_status,
-    totalCents: order.total_cents, currency: order.currency, createdAt: order.created_at, paidAt: order.paid_at,
+    totalCents: order.total_cents, discountCents: order.discount_cents || 0, currency: order.currency, createdAt: order.created_at, paidAt: order.paid_at,
     checkoutUrl: order.payment_status === 'pending' ? order.checkout_url : null, receiptUrl: paid ? order.receipt_url : null,
     items: items.map(i => ({ name: i.name_snapshot, quantity: i.quantity, unitPriceCents: i.unit_price_cents, subtotalCents: i.subtotal_cents,
-      instructions: paid ? i.delivery_snapshot : null })),
+      instructions: paid ? { instructions: i.delivery_snapshot?.instructions ?? null } : null })),
   };
   if (paid) out.whatsappUrl = waLink(settings, order.public_ref, items.map(i => i.name_snapshot));
   return out;

@@ -1,0 +1,2 @@
+export const comboCfg = (s = {}) => { const qty = +s.combo_qty, unit = +s.combo_unit_cents, price = +s.combo_price_cents; return s.combo_enabled === '1' && qty >= 2 && unit > 0 && price > 0 && price < qty * unit ? { qty, unit, price } : null; };
+export const comboDiscount = (lines, cfg) => cfg ? Math.floor(lines.filter(l => l.unit === cfg.unit).reduce((n, l) => n + l.qty, 0) / cfg.qty) * (cfg.qty * cfg.unit - cfg.price) : 0;

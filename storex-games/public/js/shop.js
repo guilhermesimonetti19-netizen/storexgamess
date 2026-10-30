@@ -27,6 +27,7 @@ import {
   idempotencyKey,
 } from "./cart.js";
 import { isLoggedIn } from "./auth.js";
+import { comboCfg, comboDiscount } from "./combo.js";
 
 const T = (tag, cls, ...k) => h(tag, { class: cls }, ...k);
 export function priceBlock(p) {
@@ -1084,10 +1085,14 @@ export async function catalog(categorySlug) {
 export async function product(slug) {
   mount(loading());
   try {
-    const p = await api("/api/products/" + encodeURIComponent(slug), {
-      auth: false,
+    const [p, st] = await Promise.all([
+      api("/api/products/" + encodeURIComponent(slug), { auth: false }),
+      settings(),
+    ]);
+    const cfg = comboCfg(st);
+    setPage(p.name, {
+      desc: (p.long_description || "").replace(/\s+/g, " ").slice(0, 160) || undefined,
     });
-    setPage(p.name, { desc: p.short_description || undefined });
     const imgs = p.images?.length ? p.images : [];
     const main = imgOrPlaceholder(
       imgs[0] || p.image_url,
@@ -1148,7 +1153,13 @@ export async function product(slug) {
               p.category_name,
             ),
           priceBlock(p),
-          p.short_description && h("p", {}, p.short_description),
+          cfg &&
+            p.effective_price_cents === cfg.unit &&
+            h(
+              "p",
+              { class: "tag" },
+              `Leve ${cfg.qty} por ${money(cfg.price)} (pode misturar)`,
+            ),
           p.in_stock
             ? h(
                 "div",
@@ -1245,10 +1256,14 @@ export async function cart() {
     );
   mount(loading());
   try {
-    const r = await api(
-      "/api/products?pageSize=48&ids=" + items.map((i) => i.id).join(","),
-      { auth: false },
-    );
+    const [r, st] = await Promise.all([
+      api(
+        "/api/products?pageSize=48&ids=" + items.map((i) => i.id).join(","),
+        { auth: false },
+      ),
+      settings(),
+    ]);
+    const cfg = comboCfg(st);
     const byId = new Map(r.items.map((p) => [p.id, p]));
     let changed = false;
     for (const i of items)
@@ -1261,10 +1276,15 @@ export async function cart() {
       .map((i) => ({ ...i, p: byId.get(i.id) }))
       .filter((l) => l.p);
     if (!lines.length) return cart();
-    const total = lines.reduce(
+    const subtotal = lines.reduce(
       (s, l) => s + l.p.effective_price_cents * l.qty,
       0,
     );
+    const disc = comboDiscount(
+      lines.map((l) => ({ unit: l.p.effective_price_cents, qty: l.qty })),
+      cfg,
+    );
+    const total = subtotal - disc;
     const btn = h(
       "button",
       { class: "btn btn-primary btn-lg", type: "button" },
@@ -1368,6 +1388,12 @@ export async function cart() {
         h(
           "div",
           { class: "summary" },
+          disc > 0 &&
+            h(
+              "p",
+              { class: "note" },
+              `Combo ${cfg.qty} por ${money(cfg.price)} aplicado: -${money(disc)}`,
+            ),
           h("p", {}, "Total: ", h("strong", {}, money(total))),
           h(
             "p",

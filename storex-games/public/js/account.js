@@ -591,6 +591,10 @@ export async function orderPage(ref) {
       ),
     );
     const parts = [...head, list];
+    if (o.discountCents > 0)
+      parts.push(
+        h("p", { class: "note" }, "Desconto do combo: -" + money(o.discountCents)),
+      );
     if (o.paymentStatus === "paid") {
       parts.push(
         h(
@@ -634,26 +638,19 @@ export async function orderPage(ref) {
             "O WhatsApp do vendedor ainda não foi configurado. Use a página de contato.",
           ),
         );
+      // Pós-compra: somente o campo de instruções.
       for (const i of o.items) {
-        const d = i.instructions;
-        if (d && Object.values(d).some(Boolean))
+        const t = i.instructions?.instructions;
+        if (t)
           parts.push(
             h(
               "section",
               { class: "card" },
               h("h3", {}, "Instruções: " + i.name),
-              d.instructions && h("p", {}, d.instructions),
-              d.steps && h("p", {}, d.steps),
-              d.required_info &&
-                h(
-                  "p",
-                  {},
-                  h("strong", {}, "Informe ao vendedor: "),
-                  d.required_info,
-                ),
-              d.eta_text &&
-                h("p", {}, h("strong", {}, "Prazo estimado: "), d.eta_text),
-              d.notes && h("p", { class: "note" }, d.notes),
+              ...t
+                .split("\n")
+                .filter(Boolean)
+                .map((x) => h("p", {}, x)),
             ),
           );
       }
