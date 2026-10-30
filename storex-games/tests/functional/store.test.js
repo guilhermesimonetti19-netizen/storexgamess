@@ -37,8 +37,19 @@ test('pedido: validações (quantidade, estoque, inativo, vazio, anônimo, não 
   assert.equal((await order(s, U.a, [{ productId: 'x', quantity: 1 }])).status, 422);
   assert.equal((await order(s, U.a, [])).status, 422);
   assert.equal((await order(s, undefined, [{ productId: PID.P1, quantity: 1 }])).status, 401);
-  assert.equal((await order(s, U.unverified, [{ productId: PID.P1, quantity: 1 }])).status, 403);
   assert.equal(s.db.t.orders.length, 0);
+});
+test('pedido: usuário sem e-mail confirmado pode comprar', async () => {
+  const s = setup();
+
+  const r = await order(
+    s,
+    U.unverified,
+    [{ productId: PID.P1, quantity: 1 }]
+  );
+
+  assert.equal(r.status, 201);
+  assert.equal(s.db.t.orders.length, 1);
 });
 test('pedido: clique repetido (mesma chave) não duplica', async () => {
   const s = setup(); const a = await order(s, U.a, [{ productId: PID.P1, quantity: 1 }], 'same-key-1234'); const b = await order(s, U.a, [{ productId: PID.P1, quantity: 1 }], 'same-key-1234');

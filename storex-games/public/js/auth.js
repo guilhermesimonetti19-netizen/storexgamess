@@ -18,8 +18,14 @@ export async function getToken() {
   try { store(await gotrue('token', { query: '?grant_type=refresh_token', body: { refresh_token: s.refresh_token } })); return read().access_token; } catch { write(null); return null; }
 }
 export async function login(email, password) {
-  try { store(await gotrue('token', { query: '?grant_type=password', body: { email, password } })); }
-  catch (e) { throw new Error(e.code === 'email_not_confirmed' ? 'Confirme seu e-mail antes de entrar. Verifique sua caixa de entrada.' : 'E-mail ou senha incorretos.'); }
+  try {
+    store(await gotrue('token', {
+      query: '?grant_type=password',
+      body: { email, password }
+    }));
+  } catch {
+    throw new Error('E-mail ou senha incorretos.');
+  }
 }
 export async function signup(email, password, displayName) {
   const redirect = encodeURIComponent(location.origin + '/entrar?verificado=1');

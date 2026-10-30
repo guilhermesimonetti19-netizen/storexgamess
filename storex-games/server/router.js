@@ -261,7 +261,7 @@ export function createApp({
     return json({ ok: true });
   });
   R("POST", "/api/orders", "user", async (ctx) => {
-    const u = await requireUser(ctx, { confirmed: true });
+    const u = await requireUser(ctx);
     if (!rateLimit(`ord:${u.id}`, 10, 60_000))
       throw new HttpError(
         429,
@@ -314,7 +314,7 @@ export function createApp({
     return json(await serializeOrder(ctx, order, items));
   });
   R("POST", "/api/orders/:ref/checkout", "user", async (ctx, { ref }) => {
-    const u = await requireUser(ctx, { confirmed: true });
+    const u = await requireUser(ctx);
     const { order } = await getOwnOrder(ctx, u, ref);
     if (order.payment_status !== "pending")
       throw new HttpError(409, "conflict", "Este pedido não está pendente.");

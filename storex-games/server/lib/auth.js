@@ -13,10 +13,13 @@ export async function getUser(ctx) {
   }
   return (ctx.user = user);
 }
-export async function requireUser(ctx, { confirmed = false } = {}) {
+export async function requireUser(ctx) {
   const u = await getUser(ctx);
-  if (!u) throw new HttpError(401, 'unauthorized', 'Faça login para continuar.');
-  if (confirmed && !u.confirmed) throw new HttpError(403, 'email_not_confirmed', 'Confirme seu e-mail para continuar.');
+
+  if (!u) {
+    throw new HttpError(401, 'unauthorized', 'Faça login para continuar.');
+  }
+
   return u;
 }
 export async function requireAdmin(ctx) {

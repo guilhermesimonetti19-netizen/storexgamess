@@ -9,7 +9,7 @@ function layout() {
   const q = h('input', { type: 'search', name: 'q', placeholder: 'Buscar jogos, assinaturas…', 'aria-label': 'Buscar produtos', maxlength: 60, autocomplete: 'off' });
   const count = h('span', { class: 'cart-count', 'aria-hidden': 'true' }); const sr = h('span', { class: 'sr-only' });
   const upd = () => { const n = cartCount(); count.textContent = n || ''; count.hidden = !n; sr.textContent = `${n} item(ns) no carrinho`; if (n) { count.classList.remove('bump'); void count.offsetWidth; count.classList.add('bump'); } }; upd(); window.addEventListener('cart', upd);
-  const links = [['/produtos', 'Catálogo', 'gamepad'], ['/categoria/jogos-videogames', 'Videogames', 'dice'], ['/categoria/jogos-pc-steam', 'PC / Steam', 'monitor'], ['/categoria/packs-assinaturas', 'Packs e assinaturas', 'gift']];
+  const links = [['/produtos', 'Catálogo', 'gamepad'], ['/categoria/jogos-videogames', 'Xbox', 'dice'], ['/categoria/jogos-pc-steam', 'PC / Steam', 'monitor'], ['/categoria/packs-assinaturas', 'Packs e assinaturas', 'gift']];
   const nav = h('nav', { id: 'nav', class: 'nav', 'aria-label': 'Principal' }, links.map(([href, t, ic]) => a(href, {}, icon(ic, { size: 18 }), h('span', {}, t))));
   const acctLabel = h('span', { class: 'lbl' }); const acct = a('/entrar', { class: 'icon-btn', 'aria-label': 'Minha conta' }, icon('user', { size: 22 }), acctLabel);
   const setAcct = () => { acct.href = isLoggedIn() ? '/conta' : '/entrar'; acctLabel.textContent = isLoggedIn() ? 'Minha conta' : 'Entrar'; }; setAcct(); onAuth(setAcct);
@@ -31,7 +31,7 @@ function layout() {
     $('#footer').replaceChildren(h('div', { class: 'foot-line', 'aria-hidden': 'true' }), h('div', { class: 'wrap foot' },
       h('div', { class: 'fbrand' }, a('/', { class: 'logo' }, h('img', { src: '/assets/logo.webp', alt: '', width: 56, height: 56, loading: 'lazy' }), h('span', { class: 'logo-txt' }, h('b', {}, 'Store', h('i', {}, 'X')), h('small', {}, 'Games'))), h('p', { class: 'muted' }, s.support_text || 'Jogos, assinaturas e serviços digitais.'),
         wa && h('a', { class: 'btn btn-sm', href: wa, target: '_blank', rel: 'noopener noreferrer' }, icon('whatsapp', { size: 18 }), 'Falar no WhatsApp'), s.instagram_url && /^https:\/\//.test(s.instagram_url) && h('a', { class: 'btn btn-sm btn-ghost', href: s.instagram_url, target: '_blank', rel: 'noopener noreferrer' }, 'Instagram')),
-      col('Loja', a('/produtos', {}, 'Catálogo'), a('/categoria/jogos-videogames', {}, 'Videogames'), a('/categoria/jogos-pc-steam', {}, 'PC / Steam'), a('/categoria/packs-assinaturas', {}, 'Packs e assinaturas')),
+      col('Loja', a('/produtos', {}, 'Catálogo'), a('/categoria/jogos-videogames', {}, 'Xbox'), a('/categoria/jogos-pc-steam', {}, 'PC / Steam'), a('/categoria/packs-assinaturas', {}, 'Packs e assinaturas')),
       col('Minha conta', a('/entrar', {}, 'Entrar ou cadastrar'), a('/conta', {}, 'Meus pedidos'), a('/carrinho', {}, 'Carrinho')),
       col('Institucional', ...[['privacidade', 'Privacidade'], ['termos', 'Termos de compra'], ['entrega', 'Entrega digital'], ['reembolso', 'Cancelamento e reembolso'], ['contato', 'Contato']].map(([s2, t]) => a('/politicas/' + s2, {}, t)))),
       h('div', { class: 'wrap legal' }, h('small', {}, 'Pagamentos processados pela InfinitePay. A StoreX Games não é loja oficial de plataformas, estúdios ou fabricantes; as marcas pertencem aos seus donos.')));

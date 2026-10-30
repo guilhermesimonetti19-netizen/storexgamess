@@ -190,7 +190,7 @@ const FAQ = [
   ],
   [
     "Preciso criar uma conta?",
-    "Sim. Com e-mail e senha (e o e-mail confirmado) você finaliza compras e acompanha todos os seus pedidos em um só lugar.",
+    "Sim. Com e-mail e senha você finaliza compras e acompanha todos os seus pedidos em um só lugar.",
   ],
   [
     "Posso cancelar um pedido?",
@@ -344,7 +344,7 @@ const secHead = (eyebrow, title, extra) =>
 
 export async function home() {
   setPage("", {
-    desc: "StoreX Games: jogos para PC, Steam e videogames, packs e assinaturas digitais. Checkout seguro e atendimento via WhatsApp.",
+    desc: "StoreX Games: jogos para Xbox, PC / Steam, packs e assinaturas digitais. Checkout seguro e atendimento via WhatsApp.",
   });
   const st = await settings();
   const waNum = String(st.whatsapp_number || "").replace(/\D/g, "");
@@ -653,7 +653,7 @@ const CAT_ART = {
   },
 };
 const CAT_SHORT = {
-  "jogos-videogames": "Videogames",
+  "jogos-videogames": "Xbox",
   "jogos-pc-steam": "PC / Steam",
   "packs-assinaturas": "Packs e assinaturas",
 };
