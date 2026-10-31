@@ -71,6 +71,7 @@ export const productCard = (p) => {
         "div",
         { class: "pc-body" },
         p.platform && h("span", { class: "tag" }, p.platform),
+        ...(p.xbox_versions || []).map((v) => h("span", { class: "tag" }, v)),
         h("h3", {}, p.name),
         priceBlock(p),
       ),
@@ -176,30 +177,34 @@ const STEPS = [
   ],
   [
     "whatsapp",
-    "Fale com o vendedor",
-    "Um botão abre o WhatsApp já com o número do pedido.",
+    "Conte com o suporte",
+    "Dúvidas? Fale com a gente no WhatsApp.",
   ],
 ];
 const FAQ = [
   [
-    "Como recebo meu produto?",
-    "A entrega é manual. Quando o pagamento é confirmado, o seu pedido mostra as instruções e um botão que abre o WhatsApp do vendedor.",
+    "Como funcionam os jogos de Xbox One e Xbox Series X|S?",
+    "Os jogos funcionam por meio dos métodos Parental ou DNS, dependendo do título adquirido. Alguns jogos permitem jogar online, enquanto outros funcionam apenas offline. Consulte a descrição de cada anúncio para verificar as condições específicas do jogo.",
   ],
   [
-    "Quando o pagamento é confirmado?",
-    "Assim que a InfinitePay confirma a transação. Se a página não atualizar, abra o pedido e use o botão “Já paguei — verificar”.",
+    "O acesso aos jogos é vitalício?",
+    "Sim! O acesso aos jogos adquiridos é vitalício!",
   ],
   [
-    "Preciso criar uma conta?",
-    "Sim. Com e-mail e senha você finaliza compras e acompanha todos os seus pedidos em um só lugar.",
+    "Vocês oferecem suporte durante ou após a compra?",
+    "Sim! Oferecemos suporte durante e após a compra. Nosso atendimento é feito pelo WhatsApp. Basta clicar na opção “Suporte” disponível em nosso site para ser direcionado diretamente ao nosso atendimento.",
   ],
   [
-    "Posso cancelar um pedido?",
-    "Pedidos que ainda não foram pagos podem ser cancelados na página do pedido. Para pedidos pagos, consulte a política de cancelamento e reembolso.",
+    "Como funcionam os jogos da Steam?",
+    "Após a confirmação do pagamento, você receberá uma conta com login e senha para acessar a Steam. Essa conta terá acesso ao jogo adquirido e é compartilhada. Não é necessário realizar nenhum método ou configuração especial: basta deixar a Steam no modo offline para jogar.",
   ],
   [
-    "O valor muda no checkout?",
-    "Não. O total é recalculado no servidor ao finalizar a compra, e é esse mesmo valor que aparece no checkout.",
+    "A StoreXGames é confiável?",
+    "Sim! Trabalhamos para oferecer uma experiência de compra segura e um bom atendimento aos nossos clientes. Se ainda tiver dúvidas, confira os depoimentos e avaliações de compradores nos destaques “Clientes” do nosso Instagram @storexgamess",
+  ],
+  [
+    "Todos os produtos têm entrega automática?",
+    "Sim! Todos os produtos possuem entrega automática de mensagem ou do próprio produto. Porém, alguns jogos de Xbox exigem aprovação manual para liberar o acesso ou adicionar a conta ao console, principalmente os lançamentos de 2026 em diante.",
   ],
 ];
 function initCategoryCarousel(tiles) {
@@ -441,7 +446,7 @@ export async function home() {
         { class: "hero-points" },
         [
           ["shield", "Pagamento seguro"],
-          ["whatsapp", "Entrega via WhatsApp"],
+          ["whatsapp", "Entrega automática"],
           ["headset", "Suporte humano"],
         ].map(([i, t]) => h("li", {}, icon(i, { size: 18 }), t)),
       ),
@@ -481,8 +486,8 @@ export async function home() {
         ],
         [
           "whatsapp",
-          "Entrega via WhatsApp",
-          "Atendimento direto com o vendedor.",
+          "Entrega automática",
+          "Receba seu produto após o pagamento.",
         ],
         [
           "lock",
@@ -1110,6 +1115,7 @@ export async function product(slug) {
     });
     const info = [
       ["Plataforma", p.platform],
+      ["Versões", (p.xbox_versions || []).join(" · ")],
       ["Região", p.region],
       ["Edição", p.edition],
       ["Requisitos", p.requirements],
@@ -1190,7 +1196,7 @@ export async function product(slug) {
           h(
             "p",
             { class: "note" },
-            "Entrega manual via WhatsApp após a confirmação do pagamento.",
+            "Entrega automática após a confirmação do pagamento.",
           ),
           info.length > 0 &&
             h(
@@ -1285,6 +1291,40 @@ export async function cart() {
       cfg,
     );
     const total = subtotal - disc;
+    let cp = 0;
+    const totalEl = h("strong", {}, money(total));
+    const cpMsg = h("p", { class: "note", "aria-live": "polite" });
+    const cpIn = h("input", {
+      type: "text",
+      placeholder: "Cupom",
+      maxlength: 20,
+      "aria-label": "Cupom de desconto",
+    });
+    const cpBtn = h(
+      "button",
+      {
+        class: "btn btn-sm",
+        type: "button",
+        onclick: async () => {
+          if (!isLoggedIn()) return go("/entrar?next=/carrinho");
+          try {
+            const r2 = await api("/api/coupon/check", {
+              method: "POST",
+              body: { code: cpIn.value },
+            });
+            cp = r2.percent;
+            const c = Math.floor((total * cp) / 100);
+            totalEl.textContent = money(total - c);
+            cpMsg.textContent = `Cupom aplicado: -${money(c)}`;
+          } catch (e) {
+            cp = 0;
+            totalEl.textContent = money(total);
+            cpMsg.textContent = e.message;
+          }
+        },
+      },
+      "Aplicar",
+    );
     const btn = h(
       "button",
       { class: "btn btn-primary btn-lg", type: "button" },
@@ -1300,6 +1340,7 @@ export async function cart() {
           body: {
             idempotencyKey: idempotencyKey(),
             items: getCart().map((i) => ({ productId: i.id, quantity: i.qty })),
+            coupon: cp ? cpIn.value : undefined,
           },
         });
         clearCart();
@@ -1394,11 +1435,13 @@ export async function cart() {
               { class: "note" },
               `Combo ${cfg.qty} por ${money(cfg.price)} aplicado: -${money(disc)}`,
             ),
-          h("p", {}, "Total: ", h("strong", {}, money(total))),
+          h("div", { class: "row" }, cpIn, cpBtn),
+          cpMsg,
+          h("p", {}, "Total: ", totalEl),
           h(
             "p",
             { class: "note" },
-            "Valores conferidos novamente no servidor ao finalizar. Pagamento no checkout seguro da InfinitePay; entrega manual via WhatsApp após a confirmação.",
+            "Valores conferidos novamente no servidor ao finalizar. Pagamento no checkout seguro da InfinitePay; entrega automática após a confirmação.",
           ),
           btn,
         ),

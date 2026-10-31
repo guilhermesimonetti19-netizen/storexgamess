@@ -127,9 +127,16 @@ async function productForm(path, id) {
       track: h('input', { type: 'checkbox', checked: p.track_stock }), stock: h('input', { type: 'number', min: 0, value: p.stock ?? 0 }), maxq: h('input', { type: 'number', min: 1, max: 10, value: p.max_per_order || 1 }),
       active: h('input', { type: 'checkbox', checked: p.is_active }), feat: h('input', { type: 'checkbox', checked: p.is_featured }), isnew: h('input', { type: 'checkbox', checked: p.is_new }),
       region: inp('region'), edition: inp('edition'), req: ta(p.requirements, 2, 1000), terms: ta(p.specific_terms, 2, 2000), ins: ta((p.delivery || {}).instructions, 5, 4000) };
+    // ---- versões do Xbox (só aparece na categoria "Jogos para videogames") ----
+    const XV = ['XBOX ONE E SERIES X|S', 'XBOX SERIES X|S', 'XBOX 360'];
+    const xv = XV.map(v => ({ v, c: h('input', { type: 'checkbox', checked: (p.xbox_versions || []).includes(v) }) }));
+    const xbox = h('fieldset', { class: 'fset' }, h('legend', {}, 'Versões do Xbox (marque uma ou mais)'), h('div', { class: 'row' }, xv.map(x => h('label', { class: 'check' }, x.c, ' ' + x.v))));
+    const isXbox = () => cats.find(c => c.id === f.cat.value)?.slug === 'jogos-videogames';
+    const sync = () => { xbox.hidden = !isXbox(); };
+    f.cat.addEventListener('change', sync); sync();
     // ---- modelos rápidos (só no cadastro) ----
     const PRESETS = [['Jogo Xbox · R$ 30', 'jogos-videogames', 'Xbox', '30.00'], ['Jogo Steam', 'jogos-pc-steam', 'Steam', '7.90'], ['Pack / assinatura', 'packs-assinaturas', '', '']];
-    const presets = !id && h('div', { class: 'presets' }, h('strong', {}, 'Modelo rápido:'), PRESETS.map(([t, slug, plat, price]) => h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { f.cat.value = cats.find(c => c.slug === slug)?.id || ''; f.platform.value = plat; f.price.value = price; f.maxq.value = 2; f.active.checked = true; f.isnew.checked = true; f.name.focus(); } }, t)));
+    const presets = !id && h('div', { class: 'presets' }, h('strong', {}, 'Modelo rápido:'), PRESETS.map(([t, slug, plat, price]) => h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { f.cat.value = cats.find(c => c.slug === slug)?.id || ''; sync(); f.platform.value = plat; f.price.value = price; f.maxq.value = 2; f.active.checked = true; f.isnew.checked = true; f.name.focus(); } }, t)));
     // ---- imagens: colar (Ctrl+V), arrastar ou escolher ----
     const server = [...p.images], pending = [], list = h('div', { class: 'img-list' });
     const fig = (src, rm, pend) => h('figure', {}, h('img', { src, alt: 'Imagem do produto' }), pend && h('small', {}, 'Será enviada ao salvar'), h('button', { class: 'btn btn-ghost', type: 'button', onclick: rm }, 'Remover'));
@@ -158,7 +165,7 @@ async function productForm(path, id) {
     const again = !id && h('button', { class: 'btn', type: 'button', onclick: () => form.reportValidity() && submit(true) }, 'Salvar e criar outro');
     async function submit(next) {
       save.disabled = true;
-      const body = { name: f.name.value, slug: f.slug.value || undefined, long_description: f.long.value, platform: f.platform.value, category_id: f.cat.value || null, price_cents: cents(f.price.value), promo_price_cents: cents(f.promo.value), track_stock: f.track.checked, stock: f.track.checked ? Number(f.stock.value) : null, max_per_order: Number(f.maxq.value), is_active: f.active.checked, is_featured: f.feat.checked, is_new: f.isnew.checked, region: f.region.value, edition: f.edition.value, requirements: f.req.value, specific_terms: f.terms.value, delivery: { instructions: f.ins.value } };
+      const body = { name: f.name.value, slug: f.slug.value || undefined, long_description: f.long.value, platform: f.platform.value, category_id: f.cat.value || null, price_cents: cents(f.price.value), promo_price_cents: cents(f.promo.value), track_stock: f.track.checked, stock: f.track.checked ? Number(f.stock.value) : null, max_per_order: Number(f.maxq.value), is_active: f.active.checked, is_featured: f.feat.checked, is_new: f.isnew.checked, region: f.region.value, edition: f.edition.value, requirements: f.req.value, specific_terms: f.terms.value, xbox_versions: isXbox() ? xv.filter(x => x.c.checked).map(x => x.v) : [], delivery: { instructions: f.ins.value } };
       try {
         let pid = id;
         if (id) await api('/api/admin/products/' + id, { method: 'PATCH', body }); else pid = (await api('/api/admin/products', { method: 'POST', body })).id;
@@ -171,6 +178,7 @@ async function productForm(path, id) {
     }
     const form = h('form', { class: 'form card', onsubmit: e => { e.preventDefault(); submit(false); } },
       h('div', { class: 'form-grid' }, field('Nome', f.name), field('Plataforma', f.platform), field('Categoria', f.cat), field('Slug (URL)', f.slug), field('Preço (R$)', f.price), field('Preço promocional (R$, opcional)', f.promo, 'Deve ser menor que o preço.')),
+      xbox,
       field('Descrição', f.long),
       h('div', { class: 'form-grid' }, field('Máx. por pedido (1–10)', f.maxq, 'Para o combo "2 por R$ 45" num mesmo produto, use 2 ou mais.'), field('Estoque', f.stock)),
       h('div', { class: 'row' }, chk(f.active, 'Ativo (visível)'), chk(f.feat, 'Destaque'), chk(f.isnew, 'Novidade'), chk(f.track, 'Controlar estoque')),
@@ -196,7 +204,7 @@ async function orderDetail(path, id) {
   async function load() { try {
     const o = await api('/api/admin/orders/' + id); const act = (label, fn, cls = 'btn') => h('button', { class: cls, type: 'button', onclick: async () => { try { await fn(); load(); } catch (e) { toast(e.message, 'err'); } } }, label); const note = h('textarea', { rows: 2, maxlength: 2000, 'aria-label': 'Nova nota interna' });
     out.replaceChildren(h('h1', {}, 'Pedido ' + o.public_ref), h('p', {}, badge(o.payment_status), ' ', badge(o.delivery_status), ' • ', fmtDate(o.created_at), ' • ', h('strong', {}, money(o.total_cents))),
-      h('dl', { class: 'specs' }, [['Referência InfinitePay (order_nsu)', o.order_nsu], ['Transação', o.transaction_nsu || '—'], ['Pago em', fmtDate(o.paid_at)], ['Desconto combo', o.discount_cents ? '-' + money(o.discount_cents) : '—'], ['Valor pago (c/ taxas do cliente)', o.paid_amount_cents ? money(o.paid_amount_cents) : '—'], ['Método', o.payment_method || '—'], ['Cliente abriu o botão do WhatsApp', o.whatsapp_link_opened_at ? fmtDate(o.whatsapp_link_opened_at) : 'não registrado']].flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])),
+      h('dl', { class: 'specs' }, [['Referência InfinitePay (order_nsu)', o.order_nsu], ['Transação', o.transaction_nsu || '—'], ['Pago em', fmtDate(o.paid_at)], ['Desconto combo', o.discount_cents ? '-' + money(o.discount_cents) : '—'], ['Cupom', o.coupon_cents ? `${o.coupon_code} (-${money(o.coupon_cents)})` : '—'], ['Valor pago (c/ taxas do cliente)', o.paid_amount_cents ? money(o.paid_amount_cents) : '—'], ['Método', o.payment_method || '—'], ['Cliente abriu o botão do WhatsApp', o.whatsapp_link_opened_at ? fmtDate(o.whatsapp_link_opened_at) : 'não registrado']].flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])),
       tbl(['Item', 'Qtd', 'Unitário', 'Subtotal'], o.items.map(i => h('tr', {}, h('td', {}, i.name_snapshot), h('td', {}, i.quantity), h('td', {}, money(i.unit_price_cents)), h('td', {}, money(i.subtotal_cents))))),
       h('div', { class: 'row' }, o.payment_status === 'pending' && act('Reconciliar com a InfinitePay', async () => { const r = await api(`/api/admin/orders/${id}/reconcile`, { method: 'POST' }); toast(r.paid ? 'Pagamento confirmado.' : 'Ainda não consta como pago.'); }), o.payment_status === 'paid' && o.delivery_status !== 'delivered' && act('Marcar como entregue', () => api('/api/admin/orders/' + id, { method: 'PATCH', body: { delivery_status: 'delivered', status: 'completed' } }), 'btn btn-primary'), o.payment_status === 'paid' && o.status === 'paid' && act('Em atendimento', () => api('/api/admin/orders/' + id, { method: 'PATCH', body: { status: 'in_delivery' } })), o.payment_status === 'pending' && act('Cancelar pedido', () => api('/api/admin/orders/' + id, { method: 'PATCH', body: { status: 'cancelled' } }), 'btn btn-danger'),
         o.payment_status === 'paid' && act('Registrar estorno (exceção)', async () => { const j = prompt('ATENÇÃO: registre isto só depois de estornar no app da InfinitePay. Justificativa (mín. 10 caracteres):'); if (j) await api(`/api/admin/orders/${id}/flag-refund`, { method: 'POST', body: { justification: j } }); }, 'btn btn-danger')),

@@ -595,6 +595,10 @@ export async function orderPage(ref) {
       parts.push(
         h("p", { class: "note" }, "Desconto do combo: -" + money(o.discountCents)),
       );
+    if (o.couponCents > 0)
+      parts.push(
+        h("p", { class: "note" }, "Cupom STORE10: -" + money(o.couponCents)),
+      );
     if (o.paymentStatus === "paid") {
       parts.push(
         h(

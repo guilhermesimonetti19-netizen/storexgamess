@@ -1,4 +1,4 @@
-import { h, a, $, go, mount, setPage, icon } from './ui.js';
+import { h, a, $, go, mount, setPage, icon, toast } from './ui.js';
 import { api, settings } from './api.js';
 import { consumeHash, isLoggedIn, onAuth } from './auth.js';
 import { cartCount } from './cart.js';
@@ -57,5 +57,15 @@ async function route() {
 }
 document.addEventListener('click', e => { const l = e.target.closest?.('a[data-link]'); if (!l || e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || l.target) return; const u = new URL(l.href, location.href); if (u.origin !== location.origin) return; e.preventDefault(); go(u.pathname + u.search); });
 window.addEventListener('popstate', route); window.addEventListener('route', route);
+function couponPop() {
+  try { if (localStorage.getItem('sx_cp')) return; } catch { /* */ }
+  const close = () => { pop.remove(); try { localStorage.setItem('sx_cp', '1'); } catch { /* */ } };
+  const pop = h('div', { class: 'cp-pop', role: 'dialog', 'aria-label': 'Cupom de desconto' },
+    h('div', {}, h('strong', {}, '10% OFF na primeira compra'), h('small', {}, 'Use o cupom STORE10 no carrinho.')),
+    h('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: async () => { try { await navigator.clipboard.writeText('STORE10'); toast('Cupom STORE10 copiado!'); } catch { toast('Copie o cupom: STORE10', 'err'); } } }, 'Copiar cupom'),
+    h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Fechar', onclick: close }, icon('close', { size: 18 })));
+  document.body.append(pop);
+}
+setTimeout(couponPop, 1500);
 const hash = consumeHash(); layout();
 if (hash === 'recovery') go('/redefinir-senha', true); else if (hash) { go('/conta', true); } else route();

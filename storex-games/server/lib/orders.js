@@ -16,6 +16,24 @@ export function normalizeItems(raw) {
   return [...m].map(([productId, quantity]) => ({ productId, quantity }));
 }
 
+// Cupom de primeira compra (validado no servidor).
+export const COUPON = { code: 'STORE10', percent: 10 };
+export async function couponFor(ctx, user, raw) {
+  if (raw === undefined || raw === null || raw === '') return null;
+  if (typeof raw !== 'string' || raw.trim().toUpperCase() !== COUPON.code) throw new HttpError(422, 'coupon', 'Cupom inválido.');
+  const { rows } = await ctx.db.select('orders', { filters: { user_id: 'eq.' + user.id, payment_status: 'in.(paid,pending)' }, select: 'payment_status,coupon_code', limit: 100 });
+  if (rows.some(o => o.payment_status === 'paid' || o.coupon_code)) throw new HttpError(409, 'coupon', 'O cupom vale apenas na primeira compra.');
+  return COUPON;
+}
+function spreadDiscount(items, discount) { // dilui o cupom nas unidades; a soma bate com o total
+  const units = items.flatMap(i => Array.from({ length: i.quantity }, () => ({ price: i.price, description: i.description })));
+  const sum = units.reduce((s, u) => s + u.price, 0); let left = discount;
+  units.forEach((u, k) => { const cut = k === units.length - 1 ? left : Math.min(left, Math.floor(discount * u.price / sum)); u.price -= cut; left -= cut; });
+  const m = new Map();
+  for (const u of units) { const key = u.price + '|' + u.description; m.set(key, m.get(key) ? { ...u, quantity: m.get(key).quantity + 1 } : { ...u, quantity: 1 }); }
+  return [...m.values()];
+}
+
 // Preços e combo SEMPRE calculados no servidor (view catalog_products + store_settings); nada do navegador é aceito como preço/total.
 export async function createOrder(ctx, user, body) {
   const key = body?.idempotencyKey;
@@ -44,13 +62,16 @@ export async function createOrder(ctx, user, body) {
   if (!(subtotal > 0)) throw bad('Total inválido.');
   const cfg = comboConfig(await loadSettings(ctx.db, COMBO_KEYS));
   const { groups, discount } = applyCombo(lines.map(l => ({ unit: l.unit_price_cents, quantity: l.quantity })), cfg);
-  const total = subtotal - discount;
+  const cp = await couponFor(ctx, user, body?.coupon);
+  const couponCents = cp ? Math.floor((subtotal - discount) * cp.percent / 100) : 0;
+  const total = subtotal - discount - couponCents;
   if (!(total > 0)) throw bad('Total inválido.');
   const ref = randomRef();
   let order;
   try {
     [order] = await ctx.db.insert('orders', [{ id: crypto.randomUUID(), public_ref: ref, order_nsu: ref, user_id: user.id, idempotency_key: key,
-      subtotal_cents: subtotal, discount_cents: discount, combo_snapshot: groups ? { ...cfg, groups } : null, total_cents: total }]);
+      subtotal_cents: subtotal, discount_cents: discount, coupon_code: cp?.code ?? null, coupon_cents: couponCents,
+      combo_snapshot: groups ? { ...cfg, groups } : null, total_cents: total }]);
   } catch (e) { // clique duplicado concorrente: devolve o pedido já criado
     if (e.code === '23505') { const r = await ctx.db.select('orders', { filters: { user_id: 'eq.' + user.id, idempotency_key: 'eq.' + key }, limit: 1 }); if (r.rows[0]) return r.rows[0]; }
     throw e;
@@ -66,9 +87,10 @@ export async function ensureCheckout(ctx, order) {
   const { rows: items } = await ctx.db.select('order_items', { filters: { order_id: 'eq.' + order.id } });
   const base = ctx.env.APP_BASE_URL.replace(/\/$/, '');
   const t = ctx.env.WEBHOOK_SECRET ? '?t=' + encodeURIComponent(ctx.env.WEBHOOK_SECRET) : '';
+  const plain = checkoutItems(items.map(i => ({ name: i.name_snapshot, unit: i.unit_price_cents, quantity: i.quantity })), order.combo_snapshot);
   const url = await createCheckoutLink(ctx.env, ctx.fetch, {
     orderNsu: order.order_nsu, redirectUrl: `${base}/pedido/${order.public_ref}`, webhookUrl: `${base}/api/webhooks/infinitepay${t}`,
-    items: checkoutItems(items.map(i => ({ name: i.name_snapshot, unit: i.unit_price_cents, quantity: i.quantity })), order.combo_snapshot) });
+    items: order.coupon_cents > 0 ? spreadDiscount(plain, order.coupon_cents) : plain });
   await ctx.db.update('orders', { id: 'eq.' + order.id }, { checkout_url: url });
   return url;
 }
@@ -79,7 +101,7 @@ export async function serializeOrder(ctx, order, items) {
   const settings = paid ? await loadSettings(ctx.db) : {};
   const out = {
     ref: order.public_ref, status: order.status, paymentStatus: order.payment_status, deliveryStatus: order.delivery_status,
-    totalCents: order.total_cents, discountCents: order.discount_cents || 0, currency: order.currency, createdAt: order.created_at, paidAt: order.paid_at,
+    totalCents: order.total_cents, discountCents: order.discount_cents || 0, couponCents: order.coupon_cents || 0, currency: order.currency, createdAt: order.created_at, paidAt: order.paid_at,
     checkoutUrl: order.payment_status === 'pending' ? order.checkout_url : null, receiptUrl: paid ? order.receipt_url : null,
     items: items.map(i => ({ name: i.name_snapshot, quantity: i.quantity, unitPriceCents: i.unit_price_cents, subtotalCents: i.subtotal_cents,
       instructions: paid ? { instructions: i.delivery_snapshot?.instructions ?? null } : null })),

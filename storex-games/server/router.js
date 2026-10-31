@@ -28,6 +28,7 @@ import {
   ensureCheckout,
   serializeOrder,
   getOwnOrder,
+  couponFor,
 } from "./lib/orders.js";
 import { verifyAndApply, flagRefund, audit, logEvent } from "./lib/payments.js";
 import { isConfigured } from "./lib/infinitepay.js";
@@ -127,7 +128,7 @@ async function listProducts(ctx, _p, url) {
     offset: (page - 1) * size,
     count: true,
     select:
-      "id,slug,name,short_description,platform,category_slug,category_name,price_cents,promo_active_cents,effective_price_cents,track_stock,stock,max_per_order,in_stock,is_featured,is_new,image_path",
+      "id,slug,name,short_description,platform,category_slug,category_name,price_cents,promo_active_cents,effective_price_cents,track_stock,stock,max_per_order,in_stock,is_featured,is_new,image_path,xbox_versions",
   });
   return json({
     items: rows.map((r) => pubProduct(ctx.env, r)),
@@ -259,6 +260,14 @@ export function createApp({
     if (!Object.keys(patch).length) throw bad("Nada para atualizar.");
     await db.upsert("profiles", [{ id: u.id, ...patch }], "id");
     return json({ ok: true });
+  });
+  R("POST", "/api/coupon/check", "user", async (ctx) => {
+    const u = await requireUser(ctx);
+    if (!rateLimit(`cp:${u.id}`, 20, 60_000))
+      throw new HttpError(429, "rate_limited", "Aguarde um instante.");
+    const b = await readJson(ctx.request, 500);
+    await couponFor(ctx, u, b.code || "x");
+    return json({ valid: true, percent: 10 });
   });
   R("POST", "/api/orders", "user", async (ctx) => {
     const u = await requireUser(ctx);
@@ -467,6 +476,7 @@ export function createApp({
     });
   });
 
+  const XV = ["XBOX ONE E SERIES X|S", "XBOX SERIES X|S", "XBOX 360"];
   const PF = (b, partial) => {
     const o = {},
       has = (k) => !partial || k in b;
@@ -485,6 +495,12 @@ export function createApp({
       ["specific_terms", "Termos", 2000],
     ])
       if (has(k)) o[k] = str(b[k], lab, { max });
+    if (has("xbox_versions")) {
+      const v = Array.isArray(b.xbox_versions) ? b.xbox_versions : [];
+      if (!v.every((x) => XV.includes(x)))
+        throw bad("Versão do Xbox inválida.");
+      o.xbox_versions = [...new Set(v)];
+    }
     if (has("category_id"))
       o.category_id = b.category_id ? uuid(b.category_id, "categoria") : null;
     if (has("price_cents"))

@@ -3306,3 +3306,34 @@ tr:last-child td {
   background: rgba(43, 255, 136, 0.09);
   outline: none;
 }
+.cp-pop {
+  position: fixed;
+  left: 12px;
+  right: 84px;
+  bottom: 16px;
+  z-index: 85;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1.5px solid var(--g);
+  border-radius: 14px;
+  background: #0d1913;
+  box-shadow: 0 14px 40px -10px #000;
+  animation: rise 0.4s var(--ease);
+}
+.cp-pop > div {
+  flex: 1 1 150px;
+  display: grid;
+}
+.cp-pop small {
+  color: var(--m);
+}
+@media (min-width: 768px) {
+  .cp-pop {
+    left: auto;
+    right: 90px;
+    max-width: 440px;
+  }
+}
