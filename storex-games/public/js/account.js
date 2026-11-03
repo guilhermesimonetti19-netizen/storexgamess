@@ -597,7 +597,11 @@ export async function orderPage(ref) {
       );
     if (o.couponCents > 0)
       parts.push(
-        h("p", { class: "note" }, "Cupom STORE10: -" + money(o.couponCents)),
+        h(
+          "p",
+          { class: "note" },
+          "Cupom " + (o.couponCode || "") + ": -" + money(o.couponCents),
+        ),
       );
     if (o.paymentStatus === "paid") {
       parts.push(

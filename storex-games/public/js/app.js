@@ -26,6 +26,12 @@ function layout() {
   const bar = h('div', { class: 'progress', 'aria-hidden': 'true' }); document.body.prepend(bar);
   const onScroll = () => { $('#header').classList.toggle('scrolled', scrollY > 24); const m = document.documentElement.scrollHeight - innerHeight; bar.style.transform = `scaleX(${m > 0 ? Math.min(1, scrollY / m) : 0})`; }; addEventListener('scroll', onScroll, { passive: true }); onScroll();
   settings().then(s => {
+    // Faixa de avisos editável pelo admin (uma linha por aviso)
+    if (s.ticker_text) {
+      const tk2 = s.ticker_text.split('\n').map(x => x.trim()).filter(Boolean).map((t, n) => [['shield', 'shield', 'lock', 'headset'][n % 4], t]);
+      const bar2 = $('.ticker');
+      if (bar2 && tk2.length) { const d1 = ticker(tk2), d2 = ticker(tk2); d2.setAttribute('aria-hidden', 'true'); bar2.replaceChildren(d1, d2); }
+    }
     const wa = s.whatsapp_number && /^\d{10,15}$/.test(s.whatsapp_number.replace(/\D/g, '')) ? 'https://wa.me/' + s.whatsapp_number.replace(/\D/g, '') : null;
     const col = (t, ...k) => h('div', { class: 'fcol' }, h('h2', {}, t), h('ul', {}, k.map(x => h('li', {}, x))));
     $('#footer').replaceChildren(h('div', { class: 'foot-line', 'aria-hidden': 'true' }), h('div', { class: 'wrap foot' },
@@ -34,7 +40,7 @@ function layout() {
       col('Loja', a('/produtos', {}, 'Catálogo'), a('/categoria/jogos-videogames', {}, 'Xbox'), a('/categoria/jogos-pc-steam', {}, 'PC / Steam'), a('/categoria/packs-assinaturas', {}, 'Packs e assinaturas')),
       col('Minha conta', a('/entrar', {}, 'Entrar ou cadastrar'), a('/conta', {}, 'Meus pedidos'), a('/carrinho', {}, 'Carrinho')),
       col('Institucional', ...[['privacidade', 'Privacidade'], ['termos', 'Termos de compra'], ['entrega', 'Entrega digital'], ['reembolso', 'Cancelamento e reembolso'], ['contato', 'Contato']].map(([s2, t]) => a('/politicas/' + s2, {}, t)))),
-      h('div', { class: 'wrap legal' }, h('small', {}, 'Pagamentos processados pela InfinitePay. A StoreX Games não é loja oficial de plataformas, estúdios ou fabricantes; as marcas pertencem aos seus donos.')));
+      h('div', { class: 'wrap legal' }, h('small', {}, s.legal_text || 'Pagamentos processados pela InfinitePay. A StoreX Games não é loja oficial de plataformas, estúdios ou fabricantes; as marcas pertencem aos seus donos.')));
     document.querySelector('.wa-float')?.remove();
     if (wa) document.body.append(h('a', { class: 'wa-float', href: wa, target: '_blank', rel: 'noopener noreferrer', 'aria-label': 'Falar no WhatsApp' }, icon('whatsapp', { size: 28 })));
   });
@@ -57,12 +63,16 @@ async function route() {
 }
 document.addEventListener('click', e => { const l = e.target.closest?.('a[data-link]'); if (!l || e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || l.target) return; const u = new URL(l.href, location.href); if (u.origin !== location.origin) return; e.preventDefault(); go(u.pathname + u.search); });
 window.addEventListener('popstate', route); window.addEventListener('route', route);
-function couponPop() {
-  try { if (localStorage.getItem('sx_cp')) return; } catch { /* */ }
-  const close = () => { pop.remove(); try { localStorage.setItem('sx_cp', '1'); } catch { /* */ } };
+// Pop-up de cupom: controlado pelo admin (Configurações → Pop-up de cupom). Só aparece com código preenchido.
+async function couponPop() {
+  const s = await settings();
+  const code = (s.popup_code || '').trim();
+  if (s.popup_enabled === '0' || !code) return;
+  try { if (localStorage.getItem('sx_cp') === code) return; } catch { /* */ }
+  const close = () => { pop.remove(); try { localStorage.setItem('sx_cp', code); } catch { /* */ } };
   const pop = h('div', { class: 'cp-pop', role: 'dialog', 'aria-label': 'Cupom de desconto' },
-    h('div', {}, h('strong', {}, '10% OFF na primeira compra'), h('small', {}, 'Use o cupom STORE10 no carrinho.')),
-    h('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: async () => { try { await navigator.clipboard.writeText('STORE10'); toast('Cupom STORE10 copiado!'); } catch { toast('Copie o cupom: STORE10', 'err'); } } }, 'Copiar cupom'),
+    h('div', {}, h('strong', {}, s.popup_title || 'Cupom de desconto'), h('small', {}, s.popup_text || ('Use o cupom ' + code + ' no carrinho.'))),
+    h('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: async () => { try { await navigator.clipboard.writeText(code); toast('Cupom ' + code + ' copiado!'); } catch { toast('Copie o cupom: ' + code, 'err'); } } }, 'Copiar cupom'),
     h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Fechar', onclick: close }, icon('close', { size: 18 })));
   document.body.append(pop);
 }

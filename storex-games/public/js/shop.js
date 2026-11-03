@@ -29,6 +29,7 @@ import {
 import { isLoggedIn } from "./auth.js";
 import { comboCfg, comboDiscount } from "./combo.js";
 
+const XBOX_VERSIONS = ["XBOX ONE E SERIES X|S", "XBOX SERIES X|S", "XBOX 360"];
 const T = (tag, cls, ...k) => h(tag, { class: cls }, ...k);
 export function priceBlock(p) {
   return h(
@@ -159,7 +160,7 @@ const TILES = [
     w: 301,
   },
 ];
-const STEPS = [
+export const STEPS = [
   [
     "search",
     "Escolha o produto",
@@ -181,7 +182,7 @@ const STEPS = [
     "Dúvidas? Fale com a gente no WhatsApp.",
   ],
 ];
-const FAQ = [
+export const FAQ = [
   [
     "Como funcionam os jogos de Xbox One e Xbox Series X|S?",
     "Os jogos funcionam por meio dos métodos Parental ou DNS, dependendo do título adquirido. Alguns jogos permitem jogar online, enquanto outros funcionam apenas offline. Consulte a descrição de cada anúncio para verificar as condições específicas do jogo.",
@@ -353,6 +354,23 @@ export async function home() {
     desc: "StoreX Games: jogos para Xbox, PC / Steam, packs e assinaturas digitais. Checkout seguro e atendimento via WhatsApp.",
   });
   const st = await settings();
+  // Conteúdo editável pelo admin (Configurações). Campo vazio = texto padrão.
+  const on = (k) => st[k] !== "0";
+  const parse = (txt, fb) => {
+    const r = String(txt || "")
+      .split("\n")
+      .map((l) => {
+        const i = l.indexOf("##");
+        return i < 0 ? null : [l.slice(0, i).trim(), l.slice(i + 2).trim()];
+      })
+      .filter((x) => x && x[0] && x[1]);
+    return r.length ? r : fb;
+  };
+  const faqList = parse(st.faq_text, FAQ);
+  const stepList = parse(
+    st.steps_text,
+    STEPS.map(([, t, d]) => [t, d]),
+  ).map(([t, d], n) => [STEPS[n]?.[0] || "check", t, d]);
   const waNum = String(st.whatsapp_number || "").replace(/\D/g, "");
   const wa = waNum.length >= 10 ? "https://wa.me/" + waNum : null;
   const suit = (n, c) =>
@@ -406,18 +424,19 @@ export async function home() {
         "span",
         { class: "eyebrow pill" },
         icon("bolt", { size: 16 }),
-        "Loja de jogos e serviços digitais",
+        st.hero_eyebrow || "Loja de jogos e serviços digitais",
       ),
       h(
         "h1",
         {},
-        "Seu próximo jogo começa ",
-        h("span", { class: "grad" }, "aqui"),
+        (st.hero_title || "Seu próximo jogo começa") + " ",
+        h("span", { class: "grad" }, st.hero_title_grad || "aqui"),
       ),
       h(
         "p",
         { class: "lead" },
-        "Escolha, pague no checkout seguro e receba as instruções direto no seu pedido, com suporte pelo WhatsApp.",
+        st.hero_lead ||
+          "Escolha, pague no checkout seguro e receba as instruções direto no seu pedido, com suporte pelo WhatsApp.",
       ),
       h(
         "div",
@@ -537,7 +556,7 @@ export async function home() {
         h(
           "ol",
           { class: "steps" },
-          STEPS.map(([i, t, d], n) =>
+          stepList.map(([i, t, d], n) =>
             h(
               "li",
               { class: "step reveal", style: `--d:${n * 100}ms` },
@@ -560,7 +579,7 @@ export async function home() {
       h(
         "div",
         { class: "faq-list" },
-        FAQ.map(([q, r], n) =>
+        faqList.map(([q, r], n) =>
           h(
             "details",
             { class: "reveal", style: `--d:${n * 60}ms` },
@@ -616,21 +635,25 @@ export async function home() {
     ),
   );
   mount(root);
+  if (!on("sec_how")) root.querySelector(".how")?.remove();
+  if (!on("sec_faq")) root.querySelector(".faq")?.remove();
   tilt(frame);
   parallax(stage);
-  initCategoryCarousel($('.tiles'));
-  const [f, n] = await Promise.all([
-    strip(
-      "Em destaque",
-      "Selecionados",
-      "featured=1",
-      "/produtos?sort=relevance",
-    ),
-    strip("Novidades", "Chegou agora", "new=1", "/produtos?sort=newest"),
+  initCategoryCarousel($(".tiles"));
+  const [b, f, n] = await Promise.all([
+    on("sec_bestseller")
+      ? strip("Mais vendidos", "Preferidos dos clientes", "bestseller=1&sort=bestseller", null)
+      : null,
+    on("sec_featured")
+      ? strip("Em destaque", "Selecionados", "featured=1", "/produtos?sort=relevance")
+      : null,
+    on("sec_new")
+      ? strip("Novidades", "Chegou agora", "new=1", "/produtos?sort=newest")
+      : null,
   ]);
   const sx = $("#strips");
   if (sx) {
-    sx.append(...[f, n].filter(Boolean));
+    sx.append(...[b, f, n].filter(Boolean));
     observeReveal(sx);
   }
 }
@@ -717,9 +740,15 @@ export async function catalog(categorySlug) {
   const qs = new URLSearchParams(location.search);
   const page = Math.max(1, Number(qs.get("page")) || 1);
   const base = location.pathname;
+  const catKey = categorySlug || qs.get("category") || "";
+  const isXbox = catKey === "jogos-videogames";
   const [cats, plats] = await Promise.all([
     api("/api/categories", { auth: false }).catch(() => []),
-    api("/api/platforms", { auth: false }).catch(() => []),
+    api(
+      "/api/platforms" +
+        (catKey ? "?category=" + encodeURIComponent(catKey) : ""),
+      { auth: false },
+    ).catch(() => []),
   ]);
   const cat = cats.find((c) => c.slug === categorySlug),
     art = CAT_ART[categorySlug];
@@ -748,6 +777,8 @@ export async function catalog(categorySlug) {
     ]);
   if (qs.get("platform"))
     active.push([qs.get("platform"), (p) => p.delete("platform")]);
+  if (qs.get("xbox_version"))
+    active.push([qs.get("xbox_version"), (p) => p.delete("xbox_version")]);
   if (num("min") !== null)
     active.push(["A partir de " + money(num("min")), (p) => p.delete("min")]);
   if (num("max") !== null)
@@ -839,6 +870,7 @@ export async function catalog(categorySlug) {
           set(p, "q", String(fd.get("q") || "").trim());
           if (!categorySlug) set(p, "category", fd.get("category"));
           set(p, "platform", fd.get("platform"));
+          set(p, "xbox_version", fd.get("xbox_version"));
           set(p, "min", cents(fd.get("minr")));
           set(p, "max", cents(fd.get("maxr")));
           set(p, "available", fd.get("available"));
@@ -865,7 +897,19 @@ export async function catalog(categorySlug) {
           ),
         ),
       ),
-    plats.length > 0 &&
+    isXbox &&
+      fieldset(
+        "Versão do Xbox",
+        h(
+          "div",
+          { class: "chips-r" },
+          [["", "Todas"], ...XBOX_VERSIONS.map((v) => [v, v])].map(([v, t]) =>
+            radio("xbox_version", v, t, (qs.get("xbox_version") || "") === v),
+          ),
+        ),
+      ),
+    !isXbox &&
+      plats.length > 0 &&
       fieldset(
         "Plataforma",
         h(
@@ -895,11 +939,6 @@ export async function catalog(categorySlug) {
     h(
       "div",
       { class: "fp-actions" },
-      h(
-        "button",
-        { class: "btn btn-primary", type: "submit" },
-        "Aplicar filtros",
-      ),
       active.length > 0 &&
         h(
           "button",
@@ -915,6 +954,8 @@ export async function catalog(categorySlug) {
         ),
     ),
   );
+  // filtra assim que o cliente escolhe uma opção (sem botão "Aplicar")
+  form.addEventListener("change", () => form.requestSubmit());
   const panel = h(
     "aside",
     { class: "fpanel", id: "fpanel", "aria-label": "Filtros" },
@@ -1262,12 +1303,15 @@ export async function cart() {
     );
   mount(loading());
   try {
-    const [r, st] = await Promise.all([
+    const [r, st, up] = await Promise.all([
       api(
         "/api/products?pageSize=48&ids=" + items.map((i) => i.id).join(","),
         { auth: false },
       ),
       settings(),
+      api("/api/products?pageSize=8&upsell=1", { auth: false }).catch(() => ({
+        items: [],
+      })),
     ]);
     const cfg = comboCfg(st);
     const byId = new Map(r.items.map((p) => [p.id, p]));
@@ -1291,6 +1335,17 @@ export async function cart() {
       cfg,
     );
     const total = subtotal - disc;
+    // "Leve também": produtos marcados pelo admin que ainda não estão no carrinho
+    const more = up.items
+      .filter((p) => !byId.has(p.id) && p.in_stock !== false)
+      .slice(0, 4)
+      .map((p) => {
+        const c = productCard(p);
+        c.querySelector(".pc-add")?.addEventListener("click", () =>
+          setTimeout(cart, 400),
+        );
+        return c;
+      });
     let cp = 0;
     const totalEl = h("strong", {}, money(total));
     const cpMsg = h("p", { class: "note", "aria-live": "polite" });
@@ -1426,6 +1481,13 @@ export async function cart() {
             );
           }),
         ),
+        more.length > 0 &&
+          h(
+            "section",
+            { class: "upsell" },
+            h("h2", {}, "Leve também"),
+            h("div", { class: "grid" }, more),
+          ),
         h(
           "div",
           { class: "summary" },

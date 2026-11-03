@@ -34,11 +34,14 @@ import { verifyAndApply, flagRefund, audit, logEvent } from "./lib/payments.js";
 import { isConfigured } from "./lib/infinitepay.js";
 
 const PAGE_SIZE = 12;
+const XBOX_VERSIONS = ["XBOX ONE E SERIES X|S", "XBOX SERIES X|S", "XBOX 360"];
+const LONG_SETTING_KEYS = ["faq_text", "steps_text", "ticker_text", "legal_text"];
 const SORTS = {
   relevance: "is_featured.desc,created_at.desc",
   price_asc: "effective_price_cents.asc",
   price_desc: "effective_price_cents.desc",
   newest: "created_at.desc",
+  bestseller: "bestseller_pos.asc,created_at.desc",
 };
 const imgUrl = (env, path) =>
   path
@@ -98,6 +101,11 @@ async function listProducts(ctx, _p, url) {
     f.category_slug = "eq." + q.get("category");
   }
   if (q.get("platform")) f.platform = "eq." + cleanTerm(q.get("platform"));
+  if (q.get("xbox_version")) {
+    if (!XBOX_VERSIONS.includes(q.get("xbox_version")))
+      throw bad("Versão do Xbox inválida.");
+    f.xbox_versions = `cs.{"${q.get("xbox_version")}"}`;
+  }
   if (q.get("ids")) {
     const ids = q.get("ids").split(",").slice(0, 20);
     ids.forEach((i) => uuid(i));
@@ -113,6 +121,8 @@ async function listProducts(ctx, _p, url) {
   if (q.get("available") === "1") f.in_stock = "eq.true";
   if (q.get("featured") === "1") f.is_featured = "eq.true";
   if (q.get("new") === "1") f.is_new = "eq.true";
+  if (q.get("upsell") === "1") f.is_upsell = "eq.true";
+  if (q.get("bestseller") === "1") f.is_bestseller = "eq.true";
   const page = Math.max(
       1,
       int(q.get("page") || 1, "page", { min: 1, max: 1000 }),
@@ -216,8 +226,15 @@ export function createApp({
     });
     return json(rows);
   });
-  R("GET", "/api/platforms", "public", async () => {
+  R("GET", "/api/platforms", "public", async (ctx, _p, url) => {
+    const f = {},
+      c = url.searchParams.get("category");
+    if (c) {
+      if (!SLUG_RE.test(c)) throw bad("Categoria inválida.");
+      f.category_slug = "eq." + c;
+    }
     const { rows } = await db.select("catalog_products", {
+      filters: f,
       select: "platform",
       limit: 1000,
     });
@@ -266,8 +283,8 @@ export function createApp({
     if (!rateLimit(`cp:${u.id}`, 20, 60_000))
       throw new HttpError(429, "rate_limited", "Aguarde um instante.");
     const b = await readJson(ctx.request, 500);
-    await couponFor(ctx, u, b.code || "x");
-    return json({ valid: true, percent: 10 });
+    const c = await couponFor(ctx, u, b.code || "x");
+    return json({ valid: true, percent: c ? c.percent : 0 });
   });
   R("POST", "/api/orders", "user", async (ctx) => {
     const u = await requireUser(ctx);
@@ -460,6 +477,53 @@ export function createApp({
       p_pending_hours: Number(s.alert_pending_hours) || 24,
       p_low_stock: Number(s.alert_low_stock) || 3,
     });
+    // Lucro = faturamento − custo (só pedidos pagos com custo informado)
+    const spD = (iso) =>
+      new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(
+        new Date(iso),
+      );
+    const keyOf = (iso) => {
+      const d = spD(iso);
+      if (bucket === "month") return d.slice(0, 7) + "-01";
+      if (bucket === "week") {
+        const t = new Date(d + "T00:00:00Z");
+        t.setUTCDate(t.getUTCDate() - ((t.getUTCDay() + 6) % 7));
+        return t.toISOString().slice(0, 10);
+      }
+      return d;
+    };
+    const { rows: paidRows } = await db.select("orders", {
+      filters: {
+        payment_status: "eq.paid",
+        paid_at: "gte." + from,
+        and: `(paid_at.lt.${to})`,
+      },
+      select: "total_cents,cost_cents,paid_at",
+      limit: 5000,
+    });
+    let costSum = 0,
+      revSum = 0,
+      missing = 0;
+    const ps = new Map();
+    for (const o of paidRows) {
+      if (o.cost_cents == null) {
+        missing++;
+        continue;
+      }
+      costSum += o.cost_cents;
+      revSum += o.total_cents;
+      const k = keyOf(o.paid_at);
+      ps.set(k, (ps.get(k) || 0) + o.total_cents - o.cost_cents);
+    }
+    const profit = {
+      cost_cents: costSum,
+      revenue_cents: revSum,
+      profit_cents: revSum - costSum,
+      missing_cost: missing,
+      series: [...ps]
+        .sort(([x], [y]) => (x < y ? -1 : 1))
+        .map(([d, cents]) => ({ d, cents })),
+    };
     const { rows: recent } = await db.select("orders", {
       order: "created_at.desc",
       limit: 10,
@@ -468,6 +532,7 @@ export function createApp({
     });
     return json({
       ...data,
+      profit,
       net_available: false,
       net_note:
         "Valor líquido depende do extrato da InfinitePay (taxas não são conhecidas pelo sistema).",
@@ -476,7 +541,7 @@ export function createApp({
     });
   });
 
-  const XV = ["XBOX ONE E SERIES X|S", "XBOX SERIES X|S", "XBOX 360"];
+  const XV = XBOX_VERSIONS;
   const PF = (b, partial) => {
     const o = {},
       has = (k) => !partial || k in b;
@@ -523,7 +588,7 @@ export function createApp({
         min: 1,
         max: 10,
       });
-    for (const k of ["is_active", "is_featured", "is_new"])
+    for (const k of ["is_active", "is_featured", "is_new", "is_upsell"])
       if (has(k)) o[k] = bool(b[k]);
     if (
       o.promo_price_cents &&
@@ -805,6 +870,8 @@ export function createApp({
           now().getTime() - (Number(s.alert_pending_hours) || 24) * 36e5,
         ).toISOString();
     }
+    // Por padrão a lista não mostra "aguardando pagamento" (só vendas, canceladas e estornadas).
+    if (!f.payment_status) f.payment_status = "in.(paid,cancelled,refunded)";
     const page = Math.max(1, Number(q.get("page")) || 1);
     const { rows, count } = await db.select("orders", {
       filters: f,
@@ -895,6 +962,8 @@ export function createApp({
       if (b.delivery_status === "delivered")
         o.delivered_at = now().toISOString();
     }
+    if ("cost_cents" in b)
+      o.cost_cents = int(b.cost_cents, "Custo", { min: 0, max: 1e8 });
     if (!Object.keys(o).length) throw bad("Nada para atualizar.");
     const { rows } = await db.select("orders", {
       filters: { id: "eq." + id },
@@ -1009,7 +1078,8 @@ export function createApp({
     for (const k of ALL_SETTING_KEYS)
       if (k in b) {
         let v = String(b[k] ?? "").trim();
-        if (v.length > 1000) throw bad(`${k} longo demais.`);
+        if (v.length > (LONG_SETTING_KEYS.includes(k) ? 3500 : 1000))
+          throw bad(`${k} longo demais.`);
         if (k === "whatsapp_number" && v && !/^\d{10,15}$/.test(v))
           throw bad("WhatsApp: use só dígitos com DDI (ex.: 5511999999999).");
         if (k === "instagram_url" && v && !/^https:\/\//.test(v))
@@ -1018,6 +1088,11 @@ export function createApp({
           throw bad(`${k} deve ser número.`);
         if (k === "combo_enabled" && !/^[01]$/.test(v))
           throw bad("combo_enabled inválido.");
+        if (
+          (k.startsWith("sec_") || k === "popup_enabled") &&
+          !/^[01]$/.test(v)
+        )
+          throw bad(`${k} inválido.`);
         if (/^combo_(qty|unit_cents|price_cents)$/.test(k) && !/^\d{1,8}$/.test(v))
           throw bad(`${k} deve ser número.`);
         rows.push({ key: k, value: v, updated_at: now().toISOString() });
@@ -1037,6 +1112,71 @@ export function createApp({
     });
     return json({ ok: true });
   });
+
+  // ----- Cupons -----
+  adm("GET", "/coupons", async () =>
+    json((await db.select("coupons", { order: "created_at.desc" })).rows),
+  );
+  adm("POST", "/coupons", async (ctx, _p, _u, a) => {
+    const b = await readJson(ctx.request, 1000);
+    const code = String(b.code || "").trim().toUpperCase();
+    if (!/^[A-Z0-9]{3,20}$/.test(code))
+      throw bad("Código: 3 a 20 letras/números, sem espaços.");
+    const percent = int(b.percent, "Desconto", { min: 1, max: 90, required: true });
+    try {
+      await db.insert("coupons", [{ code, percent }]);
+    } catch (e) {
+      if (e.code === "23505")
+        throw new HttpError(409, "conflict", "Esse cupom já existe.");
+      throw e;
+    }
+    await audit(ctx, a, "coupon.create", "coupon", code, { percent });
+    return json({ ok: true }, 201);
+  });
+  adm("DELETE", "/coupons/:code", async (ctx, { code }, _u, a) => {
+    if (!/^[A-Z0-9]{3,20}$/.test(code)) throw bad("Cupom inválido.");
+    await db.remove("coupons", { code: "eq." + code });
+    await audit(ctx, a, "coupon.delete", "coupon", code, null);
+    return json({ ok: true });
+  });
+
+  // ----- Mais vendidos (escolhidos pelo admin) -----
+  adm("GET", "/bestsellers", async () =>
+    json(
+      (
+        await db.select("products", {
+          filters: { archived_at: "is.null", is_active: "eq.true" },
+          order: "name.asc",
+          limit: 500,
+          select: "id,name,platform,is_bestseller,bestseller_pos",
+        })
+      ).rows,
+    ),
+  );
+  adm("PUT", "/bestsellers", async (ctx, _p, _u, a) => {
+    const b = await readJson(ctx.request, 20000);
+    const ids = [
+      ...new Set(
+        Array.isArray(b.ids) ? b.ids.slice(0, 40).map((x) => uuid(x)) : [],
+      ),
+    ];
+    await db.update(
+      "products",
+      { is_bestseller: "eq.true" },
+      { is_bestseller: false, bestseller_pos: 0 },
+    );
+    for (let i = 0; i < ids.length; i++)
+      await db.update(
+        "products",
+        { id: "eq." + ids[i] },
+        { is_bestseller: true, bestseller_pos: i + 1 },
+      );
+    await audit(ctx, a, "bestsellers.update", "products", null, {
+      count: ids.length,
+    });
+    return json({ ok: true, count: ids.length });
+  });
+
   adm("PUT", "/pages/:slug", async (ctx, { slug }, _u, a) => {
     if (!/^[a-z-]{2,40}$/.test(slug)) throw bad("Página inválida.");
     const b = await readJson(ctx.request, 30_000);

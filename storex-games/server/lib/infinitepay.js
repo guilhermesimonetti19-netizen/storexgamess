@@ -1,16 +1,21 @@
-// Integração InfinitePay (Checkout Integrado) — conforme a documentação pública consultada em 26/10/2026:
-//  POST https://api.checkout.infinitepay.io/links           (cria link; sem API key na doc pública)
+// Integração InfinitePay (Checkout Integrado) — conforme a documentação pública:
+//  POST https://api.checkout.infinitepay.io/links           (cria link)
 //  POST https://api.checkout.infinitepay.io/payment_check   (confere pagamento)
+// Com INFINITEPAY_API_KEY (header X-Api-Key) o link é criado sem pedir endereço de entrega.
 const BASE = 'https://api.checkout.infinitepay.io';
 export const isConfigured = env => Boolean(env.INFINITEPAY_HANDLE);
 
 export async function createCheckoutLink(env, fetchImpl, { orderNsu, items, redirectUrl, webhookUrl }) {
+  const key = env.INFINITEPAY_API_KEY;
+  const payload = {
+    handle: env.INFINITEPAY_HANDLE, order_nsu: orderNsu, redirect_url: redirectUrl, webhook_url: webhookUrl,
+    items: items.map(i => ({ quantity: i.quantity, price: i.price, description: i.description.slice(0, 120) })), // price em centavos
+  };
+  if (key) payload.options = { require_delivery_address: false }; // exige X-Api-Key
   const res = await fetchImpl(`${BASE}/links`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      handle: env.INFINITEPAY_HANDLE, order_nsu: orderNsu, redirect_url: redirectUrl, webhook_url: webhookUrl,
-      items: items.map(i => ({ quantity: i.quantity, price: i.price, description: i.description.slice(0, 120) })), // price em centavos
-    }) });
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(key ? { 'X-Api-Key': key } : {}) },
+    body: JSON.stringify(payload) });
   if (!res.ok) throw new Error('infinitepay_links_' + res.status);
   const data = await res.json().catch(() => ({}));
   const url = data.url || data.checkout_url;

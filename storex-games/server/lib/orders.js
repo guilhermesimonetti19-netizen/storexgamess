@@ -16,14 +16,16 @@ export function normalizeItems(raw) {
   return [...m].map(([productId, quantity]) => ({ productId, quantity }));
 }
 
-// Cupom de primeira compra (validado no servidor).
-export const COUPON = { code: 'STORE10', percent: 10 };
+// Cupom de primeira compra (validado no servidor). Os cupons ficam na tabela `coupons` (gerenciada no admin).
 export async function couponFor(ctx, user, raw) {
   if (raw === undefined || raw === null || raw === '') return null;
-  if (typeof raw !== 'string' || raw.trim().toUpperCase() !== COUPON.code) throw new HttpError(422, 'coupon', 'Cupom inválido.');
+  const code = typeof raw === 'string' ? raw.trim().toUpperCase() : '';
+  if (!/^[A-Z0-9]{3,20}$/.test(code)) throw new HttpError(422, 'coupon', 'Cupom inválido.');
+  const { rows: cr } = await ctx.db.select('coupons', { filters: { code: 'eq.' + code, is_active: 'eq.true' }, limit: 1 });
+  if (!cr[0]) throw new HttpError(422, 'coupon', 'Cupom inválido.');
   const { rows } = await ctx.db.select('orders', { filters: { user_id: 'eq.' + user.id, payment_status: 'in.(paid,pending)' }, select: 'payment_status,coupon_code', limit: 100 });
   if (rows.some(o => o.payment_status === 'paid' || o.coupon_code)) throw new HttpError(409, 'coupon', 'O cupom vale apenas na primeira compra.');
-  return COUPON;
+  return { code: cr[0].code, percent: cr[0].percent };
 }
 function spreadDiscount(items, discount) { // dilui o cupom nas unidades; a soma bate com o total
   const units = items.flatMap(i => Array.from({ length: i.quantity }, () => ({ price: i.price, description: i.description })));
@@ -101,7 +103,7 @@ export async function serializeOrder(ctx, order, items) {
   const settings = paid ? await loadSettings(ctx.db) : {};
   const out = {
     ref: order.public_ref, status: order.status, paymentStatus: order.payment_status, deliveryStatus: order.delivery_status,
-    totalCents: order.total_cents, discountCents: order.discount_cents || 0, couponCents: order.coupon_cents || 0, currency: order.currency, createdAt: order.created_at, paidAt: order.paid_at,
+    totalCents: order.total_cents, discountCents: order.discount_cents || 0, couponCents: order.coupon_cents || 0, couponCode: order.coupon_code || null, currency: order.currency, createdAt: order.created_at, paidAt: order.paid_at,
     checkoutUrl: order.payment_status === 'pending' ? order.checkout_url : null, receiptUrl: paid ? order.receipt_url : null,
     items: items.map(i => ({ name: i.name_snapshot, quantity: i.quantity, unitPriceCents: i.unit_price_cents, subtotalCents: i.subtotal_cents,
       instructions: paid ? { instructions: i.delivery_snapshot?.instructions ?? null } : null })),

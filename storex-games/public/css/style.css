@@ -3337,3 +3337,21 @@ tr:last-child td {
     max-width: 440px;
   }
 }
+.order,
+.order .card,
+.order .state {
+  min-width: 0;
+  max-width: 100%;
+}
+.order .card p,
+.order .card h3,
+.order .state p,
+.order-items li {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.order .btn {
+  max-width: 100%;
+  text-align: center;
+  white-space: normal;
+}

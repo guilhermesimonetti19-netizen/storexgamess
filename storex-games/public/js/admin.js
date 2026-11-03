@@ -1,8 +1,9 @@
 import { h, a, icon, money, fmtDate, mount, setPage, loading, errorBox, empty, toast, go, field, badge, STATUS, $ } from './ui.js';
 import { api } from './api.js';
 import { isLoggedIn } from './auth.js';
+import { FAQ, STEPS } from './shop.js';
 
-const NAV = [['/admin', 'Dashboard', 'bolt'], ['/admin/produtos', 'Produtos', 'package'], ['/admin/pedidos', 'Pedidos', 'receipt'], ['/admin/relatorios', 'Relatórios', 'tag'], ['/admin/configuracoes', 'Configurações', 'key'], ['/admin/auditoria', 'Auditoria', 'clock']];
+const NAV = [['/admin', 'Dashboard', 'bolt'], ['/admin/produtos', 'Produtos', 'package'], ['/admin/mais-vendidos', 'Mais vendidos', 'star'], ['/admin/pedidos', 'Pedidos', 'receipt'], ['/admin/relatorios', 'Relatórios', 'tag'], ['/admin/cupons', 'Cupons', 'tag'], ['/admin/configuracoes', 'Configurações', 'key'], ['/admin/auditoria', 'Auditoria', 'clock']];
 const shell = (path, ...content) => mount(h('div', { class: 'wrap page admin' }, h('nav', { class: 'admin-nav', 'aria-label': 'Administração' }, NAV.map(([p, t, ic]) => a(p, { 'aria-current': (p === '/admin' ? path === p : path.startsWith(p)) ? 'page' : null }, icon(ic, { size: 18 }), t))), h('section', { class: 'admin-main' }, content)));
 const tbl = (cols, rows) => rows.length ? h('div', { class: 'table-wrap' }, h('table', {}, h('thead', {}, h('tr', {}, cols.map(c => h('th', { scope: 'col' }, c)))), h('tbody', {}, rows))) : empty('Nenhum registro.');
 const pager = (r, fn) => h('nav', { class: 'pager' }, r.page > 1 && h('button', { class: 'btn', onclick: () => fn(r.page - 1) }, '←'), h('span', {}, `Página ${r.page} • ${r.total} registro(s)`), r.page * (r.pageSize || 20) < r.total && h('button', { class: 'btn', onclick: () => fn(r.page + 1) }, '→'));
@@ -18,9 +19,11 @@ export async function admin(path) {
   if (path === '/admin/produtos') return products(path);
   if (path === '/admin/produtos/novo') return productForm(path, null);
   if ((m = path.match(/^\/admin\/produtos\/([0-9a-f-]{36})$/))) return productForm(path, m[1]);
+  if (path === '/admin/mais-vendidos') return bestsellersPage(path);
   if (path === '/admin/pedidos') return orders(path);
   if ((m = path.match(/^\/admin\/pedidos\/([0-9a-f-]{36})$/))) return orderDetail(path, m[1]);
   if (path === '/admin/relatorios') return reports(path);
+  if (path === '/admin/cupons') return couponsPage(path);
   if (path === '/admin/configuracoes') return settingsPage(path);
   if (path === '/admin/auditoria') return auditPage(path);
   mount(h('p', { class: 'state' }, 'Página administrativa não encontrada.'));
@@ -87,8 +90,13 @@ async function dashboard(path) {
           kpi('Pedidos pagos', String(k.paid_orders), pct(k.paid_orders, k.paid_orders_prev), 'receipt', 1),
           kpi('Ticket médio', ticket === null ? '—' : money(ticket), 'Faturamento ÷ pedidos pagos', 'star', 1),
           kpi('Aguardando pagamento', String(cnt('pending')), `${at.pending_old} há muito tempo`, 'clock', 1)),
+        h('div', { class: 'kpis' },
+          kpi('Custo (pedidos com custo)', money(d.profit.cost_cents), d.profit.missing_cost ? `${d.profit.missing_cost} pedido(s) sem custo informado` : 'Todos com custo', 'package', 1),
+          kpi('Lucro', money(d.profit.profit_cents), 'Faturamento − custo', 'star', 1),
+          kpi('Margem', d.profit.revenue_cents ? Math.round(d.profit.profit_cents / d.profit.revenue_cents * 100) + '%' : '—', 'Lucro ÷ faturamento', 'tag', 1)),
         h('div', { class: 'charts' },
           lineChart('Faturamento por ' + ({ day: 'dia', week: 'semana', month: 'mês' })[bucket] + ' (R$)', d.revenue_series.map(x => ({ l: x.d, v: x.cents / 100 })), R),
+          lineChart('Lucro por ' + ({ day: 'dia', week: 'semana', month: 'mês' })[bucket] + ' (R$)', d.profit.series.map(x => ({ l: x.d, v: x.cents / 100 })), R),
           donut('Pedidos por status', d.orders_by_status.map(x => ({ k: x.status, l: STATUS[x.status] || x.status, v: x.count }))),
           hbars('Vendas por categoria (R$)', d.by_category.map(x => ({ l: x.category, v: x.cents / 100 })), R),
           bars('Novos clientes', d.customers_series.map(x => ({ l: x.d, v: x.n })))),
@@ -119,13 +127,21 @@ async function productForm(path, id) {
   const out = h('div', {}, loading()); shell(path, h('h1', {}, id ? 'Editar produto' : 'Novo produto'), out);
   try {
     const [cats, p] = await Promise.all([api('/api/admin/categories'), id ? api('/api/admin/products/' + id) : Promise.resolve({ delivery: {}, images: [], is_active: true, is_new: true, max_per_order: 2 })]);
+    // ---- plataforma: lista com o que já foi usado (evita erro de digitação) ----
+    const plats = await api('/api/platforms', { auth: false }).catch(() => []);
+    const platList = [...new Set(['Xbox', 'Steam', 'Assinatura', 'Curso', ...plats, p.platform].filter(Boolean))].sort((x, y) => x.localeCompare(y, 'pt-BR'));
+    const platSel = h('select', {}, h('option', { value: '' }, 'Sem plataforma'), platList.map(x => h('option', { value: x, selected: x === p.platform }, x)), h('option', { value: '__new' }, '+ Nova plataforma…'));
+    const platNew = h('input', { type: 'text', maxlength: 60, placeholder: 'Nome da nova plataforma', hidden: true });
+    platSel.addEventListener('change', () => { platNew.hidden = platSel.value !== '__new'; if (!platNew.hidden) platNew.focus(); });
+    const platProxy = { get value() { return platSel.value === '__new' ? platNew.value.trim() : platSel.value; }, set value(v) { platSel.value = v || ''; platNew.hidden = true; } };
     const inp = (k, o = {}) => h('input', { type: 'text', value: p[k] ?? '', ...o }), ta = (v, rows, max) => h('textarea', { rows, maxlength: max }, v ?? '');
     const chk = (c, t) => h('label', { class: 'check' }, c, ' ' + t), cents = v => (v === '' ? null : Math.round(Number(v) * 100));
-    const f = { name: inp('name', { required: true, maxlength: 140 }), slug: inp('slug', { maxlength: 120, placeholder: 'gerado do nome' }), long: ta(p.long_description || p.short_description, 5, 8000), platform: inp('platform', { maxlength: 60 }),
+    const f = { name: inp('name', { required: true, maxlength: 140 }), slug: inp('slug', { maxlength: 120, placeholder: 'gerado do nome' }), long: ta(p.long_description || p.short_description, 5, 8000), platform: platProxy,
       cat: h('select', {}, h('option', { value: '' }, 'Sem categoria'), cats.map(c => h('option', { value: c.id, selected: c.id === p.category_id }, c.name))),
       price: h('input', { type: 'number', step: '0.01', min: '0.01', required: true, value: p.price_cents ? (p.price_cents / 100).toFixed(2) : '' }), promo: h('input', { type: 'number', step: '0.01', min: '0.01', value: p.promo_price_cents ? (p.promo_price_cents / 100).toFixed(2) : '' }),
       track: h('input', { type: 'checkbox', checked: p.track_stock }), stock: h('input', { type: 'number', min: 0, value: p.stock ?? 0 }), maxq: h('input', { type: 'number', min: 1, max: 10, value: p.max_per_order || 1 }),
       active: h('input', { type: 'checkbox', checked: p.is_active }), feat: h('input', { type: 'checkbox', checked: p.is_featured }), isnew: h('input', { type: 'checkbox', checked: p.is_new }),
+      upsell: h('input', { type: 'checkbox', checked: p.is_upsell }),
       region: inp('region'), edition: inp('edition'), req: ta(p.requirements, 2, 1000), terms: ta(p.specific_terms, 2, 2000), ins: ta((p.delivery || {}).instructions, 5, 4000) };
     // ---- versões do Xbox (só aparece na categoria "Jogos para videogames") ----
     const XV = ['XBOX ONE E SERIES X|S', 'XBOX SERIES X|S', 'XBOX 360'];
@@ -165,7 +181,7 @@ async function productForm(path, id) {
     const again = !id && h('button', { class: 'btn', type: 'button', onclick: () => form.reportValidity() && submit(true) }, 'Salvar e criar outro');
     async function submit(next) {
       save.disabled = true;
-      const body = { name: f.name.value, slug: f.slug.value || undefined, long_description: f.long.value, platform: f.platform.value, category_id: f.cat.value || null, price_cents: cents(f.price.value), promo_price_cents: cents(f.promo.value), track_stock: f.track.checked, stock: f.track.checked ? Number(f.stock.value) : null, max_per_order: Number(f.maxq.value), is_active: f.active.checked, is_featured: f.feat.checked, is_new: f.isnew.checked, region: f.region.value, edition: f.edition.value, requirements: f.req.value, specific_terms: f.terms.value, xbox_versions: isXbox() ? xv.filter(x => x.c.checked).map(x => x.v) : [], delivery: { instructions: f.ins.value } };
+      const body = { name: f.name.value, slug: f.slug.value || undefined, long_description: f.long.value, platform: f.platform.value, category_id: f.cat.value || null, price_cents: cents(f.price.value), promo_price_cents: cents(f.promo.value), track_stock: f.track.checked, stock: f.track.checked ? Number(f.stock.value) : null, max_per_order: Number(f.maxq.value), is_active: f.active.checked, is_featured: f.feat.checked, is_new: f.isnew.checked, is_upsell: f.upsell.checked, region: f.region.value, edition: f.edition.value, requirements: f.req.value, specific_terms: f.terms.value, xbox_versions: isXbox() ? xv.filter(x => x.c.checked).map(x => x.v) : [], delivery: { instructions: f.ins.value } };
       try {
         let pid = id;
         if (id) await api('/api/admin/products/' + id, { method: 'PATCH', body }); else pid = (await api('/api/admin/products', { method: 'POST', body })).id;
@@ -177,11 +193,11 @@ async function productForm(path, id) {
       save.disabled = false;
     }
     const form = h('form', { class: 'form card', onsubmit: e => { e.preventDefault(); submit(false); } },
-      h('div', { class: 'form-grid' }, field('Nome', f.name), field('Plataforma', f.platform), field('Categoria', f.cat), field('Slug (URL)', f.slug), field('Preço (R$)', f.price), field('Preço promocional (R$, opcional)', f.promo, 'Deve ser menor que o preço.')),
+      h('div', { class: 'form-grid' }, field('Nome', f.name), h('div', {}, field('Plataforma', platSel), platNew), field('Categoria', f.cat), field('Slug (URL)', f.slug), field('Preço (R$)', f.price), field('Preço promocional (R$, opcional)', f.promo, 'Deve ser menor que o preço.')),
       xbox,
       field('Descrição', f.long),
       h('div', { class: 'form-grid' }, field('Máx. por pedido (1–10)', f.maxq, 'Para o combo "2 por R$ 45" num mesmo produto, use 2 ou mais.'), field('Estoque', f.stock)),
-      h('div', { class: 'row' }, chk(f.active, 'Ativo (visível)'), chk(f.feat, 'Destaque'), chk(f.isnew, 'Novidade'), chk(f.track, 'Controlar estoque')),
+      h('div', { class: 'row' }, chk(f.active, 'Ativo (visível)'), chk(f.feat, 'Destaque'), chk(f.isnew, 'Novidade'), chk(f.track, 'Controlar estoque'), chk(f.upsell, 'Sugerir em "Leve também" (carrinho)')),
       h('h2', {}, 'Imagens'), zone, list,
       h('h2', {}, 'Instruções pós-compra'), h('p', { class: 'note' }, 'Privadas: o cliente só vê depois do pagamento confirmado.'), f.ins,
       h('details', {}, h('summary', {}, 'Mais opções (região, edição, requisitos, termos)'), field('Região', f.region), field('Edição', f.edition), field('Requisitos', f.req), field('Termos específicos', f.terms)),
@@ -189,6 +205,28 @@ async function productForm(path, id) {
     const del = id && h('button', { class: 'btn btn-danger', type: 'button', onclick: async () => { if (confirm('Excluir/arquivar este produto? Se já foi vendido, ele será apenas arquivado.')) { try { await api('/api/admin/products/' + id, { method: 'DELETE' }); toast('Produto removido.'); go('/admin/produtos'); } catch (er) { toast(er.message, 'err'); } } } }, 'Excluir / arquivar');
     out.replaceChildren(...[presets, form, del].filter(Boolean));
   } catch (e) { out.replaceChildren(errorBox(e.message)); }
+}
+
+// ---------- Mais vendidos (o admin escolhe o que aparece na loja) ----------
+async function bestsellersPage(path) {
+  const out = h('div', {}, loading()); shell(path, h('h1', {}, 'Mais vendidos'), out);
+  try {
+    const all = await api('/api/admin/bestsellers');
+    let sel = all.filter(x => x.is_bestseller).sort((x, y) => x.bestseller_pos - y.bestseller_pos);
+    const q = h('input', { type: 'search', placeholder: 'Buscar produto para adicionar', 'aria-label': 'Buscar produto' });
+    const selBox = h('div', {}), listBox = h('div', {});
+    const mv = (i, d) => { const j = i + d; if (j < 0 || j >= sel.length) return; [sel[i], sel[j]] = [sel[j], sel[i]]; draw(); };
+    function draw() {
+      const chosen = new Set(sel.map(x => x.id)), term = q.value.trim().toLowerCase();
+      const rest = all.filter(x => !chosen.has(x.id) && x.name.toLowerCase().includes(term)).slice(0, 30);
+      selBox.replaceChildren(h('h2', {}, `Exibidos na loja (${sel.length})`),
+        sel.length ? h('ol', {}, sel.map((x, i) => h('li', { class: 'row' }, h('span', {}, x.name), h('button', { class: 'btn btn-sm', type: 'button', 'aria-label': 'Subir', onclick: () => mv(i, -1) }, '↑'), h('button', { class: 'btn btn-sm', type: 'button', 'aria-label': 'Descer', onclick: () => mv(i, 1) }, '↓'), h('button', { class: 'btn btn-sm btn-danger', type: 'button', onclick: () => { sel.splice(i, 1); draw(); } }, 'Remover')))) : empty('Nenhum selecionado: a seção não aparece na loja.'));
+      listBox.replaceChildren(rest.length ? h('ul', {}, rest.map(x => h('li', { class: 'row' }, h('span', {}, x.name + (x.platform ? ' · ' + x.platform : '')), h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { if (sel.length >= 40) return toast('Máximo de 40.', 'err'); sel.push(x); draw(); } }, 'Adicionar')))) : empty('Nenhum produto encontrado.'));
+    }
+    q.addEventListener('input', draw); draw();
+    const save = h('button', { class: 'btn btn-primary', type: 'button', onclick: async () => { try { await api('/api/admin/bestsellers', { method: 'PUT', body: { ids: sel.map(x => x.id) } }); toast('Mais vendidos salvos.'); } catch (er) { toast(er.message, 'err'); } } }, 'Salvar');
+    out.replaceChildren(h('p', { class: 'note' }, 'Só os produtos desta lista aparecem em "Mais vendidos" na página inicial, na ordem daqui. Só produtos ativos entram.'), selBox, save, h('h2', {}, 'Adicionar produto'), q, listBox);
+  } catch (er) { out.replaceChildren(errorBox(er.message)); }
 }
 
 async function orders(path) {
@@ -203,11 +241,13 @@ async function orderDetail(path, id) {
   const out = h('div', {}, loading()); shell(path, a('/admin/pedidos', {}, '← Pedidos'), out);
   async function load() { try {
     const o = await api('/api/admin/orders/' + id); const act = (label, fn, cls = 'btn') => h('button', { class: cls, type: 'button', onclick: async () => { try { await fn(); load(); } catch (e) { toast(e.message, 'err'); } } }, label); const note = h('textarea', { rows: 2, maxlength: 2000, 'aria-label': 'Nova nota interna' });
+    const cost = h('input', { type: 'number', step: '0.01', min: '0', value: o.cost_cents != null ? (o.cost_cents / 100).toFixed(2) : '' });
     out.replaceChildren(h('h1', {}, 'Pedido ' + o.public_ref), h('p', {}, badge(o.payment_status), ' ', badge(o.delivery_status), ' • ', fmtDate(o.created_at), ' • ', h('strong', {}, money(o.total_cents))),
-      h('dl', { class: 'specs' }, [['Referência InfinitePay (order_nsu)', o.order_nsu], ['Transação', o.transaction_nsu || '—'], ['Pago em', fmtDate(o.paid_at)], ['Desconto combo', o.discount_cents ? '-' + money(o.discount_cents) : '—'], ['Cupom', o.coupon_cents ? `${o.coupon_code} (-${money(o.coupon_cents)})` : '—'], ['Valor pago (c/ taxas do cliente)', o.paid_amount_cents ? money(o.paid_amount_cents) : '—'], ['Método', o.payment_method || '—'], ['Cliente abriu o botão do WhatsApp', o.whatsapp_link_opened_at ? fmtDate(o.whatsapp_link_opened_at) : 'não registrado']].flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])),
+      h('dl', { class: 'specs' }, [['Referência InfinitePay (order_nsu)', o.order_nsu], ['Transação', o.transaction_nsu || '—'], ['Pago em', fmtDate(o.paid_at)], ['Desconto combo', o.discount_cents ? '-' + money(o.discount_cents) : '—'], ['Cupom', o.coupon_cents ? `${o.coupon_code} (-${money(o.coupon_cents)})` : '—'], ['Valor pago (c/ taxas do cliente)', o.paid_amount_cents ? money(o.paid_amount_cents) : '—'], ['Custo informado', o.cost_cents != null ? money(o.cost_cents) : '—'], ['Método', o.payment_method || '—'], ['Cliente abriu o botão do WhatsApp', o.whatsapp_link_opened_at ? fmtDate(o.whatsapp_link_opened_at) : 'não registrado']].flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])),
       tbl(['Item', 'Qtd', 'Unitário', 'Subtotal'], o.items.map(i => h('tr', {}, h('td', {}, i.name_snapshot), h('td', {}, i.quantity), h('td', {}, money(i.unit_price_cents)), h('td', {}, money(i.subtotal_cents))))),
       h('div', { class: 'row' }, o.payment_status === 'pending' && act('Reconciliar com a InfinitePay', async () => { const r = await api(`/api/admin/orders/${id}/reconcile`, { method: 'POST' }); toast(r.paid ? 'Pagamento confirmado.' : 'Ainda não consta como pago.'); }), o.payment_status === 'paid' && o.delivery_status !== 'delivered' && act('Marcar como entregue', () => api('/api/admin/orders/' + id, { method: 'PATCH', body: { delivery_status: 'delivered', status: 'completed' } }), 'btn btn-primary'), o.payment_status === 'paid' && o.status === 'paid' && act('Em atendimento', () => api('/api/admin/orders/' + id, { method: 'PATCH', body: { status: 'in_delivery' } })), o.payment_status === 'pending' && act('Cancelar pedido', () => api('/api/admin/orders/' + id, { method: 'PATCH', body: { status: 'cancelled' } }), 'btn btn-danger'),
         o.payment_status === 'paid' && act('Registrar estorno (exceção)', async () => { const j = prompt('ATENÇÃO: registre isto só depois de estornar no app da InfinitePay. Justificativa (mín. 10 caracteres):'); if (j) await api(`/api/admin/orders/${id}/flag-refund`, { method: 'POST', body: { justification: j } }); }, 'btn btn-danger')),
+      o.payment_status === 'paid' && h('form', { class: 'form card', onsubmit: async ev => { ev.preventDefault(); try { await api('/api/admin/orders/' + id, { method: 'PATCH', body: { cost_cents: cost.value === '' ? null : Math.round(Number(cost.value) * 100) } }); toast('Custo salvo.'); load(); } catch (er) { toast(er.message, 'err'); } } }, field('Custo deste pedido (R$)', cost, 'Quanto você pagou pelo produto. Alimenta o lucro do dashboard.'), h('button', { class: 'btn btn-primary', type: 'submit' }, 'Salvar custo')),
       h('p', { class: 'note' }, 'O sistema não permite marcar pedido como pago manualmente: a confirmação vem da InfinitePay.'),
       h('h2', {}, 'Pagamentos / eventos'), tbl(['Quando', 'Origem', 'Resultado', 'Valor'], o.events.map(e => h('tr', {}, h('td', {}, fmtDate(e.created_at)), h('td', {}, e.source), h('td', {}, e.validation_result), h('td', {}, e.amount_cents ? money(e.amount_cents) : '—')))),
       h('h2', {}, 'Notas internas (invisíveis ao cliente)'), h('form', { onsubmit: async e => { e.preventDefault(); if (!note.value.trim()) return; try { await api(`/api/admin/orders/${id}/notes`, { method: 'POST', body: { note: note.value } }); load(); } catch (er) { toast(er.message, 'err'); } } }, note, h('button', { class: 'btn', type: 'submit' }, 'Adicionar nota')), h('ul', {}, o.notes.map(n => h('li', {}, fmtDate(n.created_at) + ' — ' + n.note))));
@@ -219,13 +259,38 @@ async function reports(path) {
   const rec = h('button', { class: 'btn', onclick: async () => { try { const r = await api('/api/admin/reconcile', { method: 'POST' }); toast(`Conferidos ${r.checked}; expirados ${r.expired}; pagos ${r.paid}.`); } catch (e) { toast(e.message, 'err'); } } }, 'Conferir/expirar pedidos pendentes antigos');
   shell(path, h('h1', {}, 'Relatórios'), h('p', { class: 'note' }, 'O CSV não inclui e-mail nem dados pessoais de clientes.'), h('div', { class: 'row' }, h('label', {}, 'De ', f), h('label', {}, 'Até ', t), btn), h('h2', {}, 'Manutenção'), rec);
 }
+
+// ---------- Cupons ----------
+async function couponsPage(path) {
+  const out = h('div', {}, loading()); shell(path, h('h1', {}, 'Cupons'), out);
+  const code = h('input', { type: 'text', maxlength: 20, placeholder: 'EX: BEMVINDO' }), pc = h('input', { type: 'number', min: 1, max: 90, value: 5 });
+  async function load() { try {
+    const rows = await api('/api/admin/coupons');
+    out.replaceChildren(
+      h('form', { class: 'form card', onsubmit: async e => { e.preventDefault(); try { await api('/api/admin/coupons', { method: 'POST', body: { code: code.value, percent: Number(pc.value) } }); code.value = ''; load(); } catch (er) { toast(er.message, 'err'); } } }, field('Código do cupom', code, 'Só letras e números.'), field('Desconto (%)', pc), h('button', { class: 'btn btn-primary', type: 'submit' }, 'Adicionar cupom')),
+      tbl(['Código', 'Desconto', ''], rows.map(c => h('tr', {}, h('td', {}, c.code), h('td', {}, c.percent + '%'), h('td', {}, h('button', { class: 'btn btn-danger', type: 'button', onclick: async () => { if (!confirm('Excluir o cupom ' + c.code + '?')) return; try { await api('/api/admin/coupons/' + c.code, { method: 'DELETE' }); load(); } catch (er) { toast(er.message, 'err'); } } }, 'Excluir'))))));
+  } catch (er) { out.replaceChildren(errorBox(er.message, load)); } }
+  load();
+}
+
 async function settingsPage(path) {
   const out = h('div', {}, loading()); shell(path, h('h1', {}, 'Configurações'), out);
   try {
     const { settings: s, pages } = await api('/api/admin/settings'); const i = (k, o = {}) => h('input', { type: 'text', value: s[k] ?? '', ...o }); const e = { store_name: i('store_name', { maxlength: 80 }), whatsapp_number: i('whatsapp_number', { inputmode: 'numeric', placeholder: '5511999999999' }), whatsapp_message: h('textarea', { rows: 3, maxlength: 500 }, s.whatsapp_message ?? ''), support_text: i('support_text', { maxlength: 200 }), instagram_url: i('instagram_url', { placeholder: 'https://instagram.com/…' }), alert_pending_hours: i('alert_pending_hours', { inputmode: 'numeric' }), alert_low_stock: i('alert_low_stock', { inputmode: 'numeric' }) };
     const cb = { en: h('input', { type: 'checkbox', checked: s.combo_enabled === '1' }), qty: h('input', { type: 'number', min: 2, max: 10, value: s.combo_qty || 2 }), unit: h('input', { type: 'number', step: '0.01', min: '0.01', value: ((Number(s.combo_unit_cents) || 3000) / 100).toFixed(2) }), price: h('input', { type: 'number', step: '0.01', min: '0.01', value: ((Number(s.combo_price_cents) || 4500) / 100).toFixed(2) }) };
     const c100 = v => String(Math.round(Number(v) * 100));
-    const form = h('form', { class: 'form card', onsubmit: async ev => { ev.preventDefault(); try { await api('/api/admin/settings', { method: 'PUT', body: { ...Object.fromEntries(Object.entries(e).map(([k, v]) => [k, v.value])), combo_enabled: cb.en.checked ? '1' : '0', combo_qty: cb.qty.value, combo_unit_cents: c100(cb.unit.value), combo_price_cents: c100(cb.price.value) } }); toast('Configurações salvas.'); } catch (er) { toast(er.message, 'err'); } } }, field('Nome da loja', e.store_name), field('WhatsApp oficial (só dígitos, com DDI)', e.whatsapp_number, 'Ex.: 5511999999999'), field('Mensagem inicial do WhatsApp', e.whatsapp_message, 'Use {pedido} onde o código do pedido deve entrar.'), field('Texto de suporte (rodapé)', e.support_text), field('Instagram (URL https)', e.instagram_url), field('Alerta: pedido pendente após (horas)', e.alert_pending_hours), field('Alerta: estoque baixo até (unidades)', e.alert_low_stock),
+    // ---- textos e seções da loja editáveis ----
+    const ta = (k, rows, max, fb = '') => h('textarea', { rows, maxlength: max }, s[k] ?? fb);
+    const tx = { hero_eyebrow: i('hero_eyebrow', { maxlength: 80 }), hero_title: i('hero_title', { maxlength: 120 }), hero_title_grad: i('hero_title_grad', { maxlength: 40 }), hero_lead: ta('hero_lead', 3, 400),
+      ticker_text: ta('ticker_text', 4, 600, 'Checkout seguro InfinitePay\nEntrega automática\nInstruções liberadas após a confirmação do pagamento\nSuporte direto no WhatsApp'),
+      faq_text: ta('faq_text', 12, 3500, FAQ.map(([q, r]) => q + ' ## ' + r).join('\n')), steps_text: ta('steps_text', 5, 1200, STEPS.map(([, t, d]) => t + ' ## ' + d).join('\n')),
+      legal_text: ta('legal_text', 3, 800), popup_title: i('popup_title', { maxlength: 80 }), popup_text: i('popup_text', { maxlength: 200 }), popup_code: i('popup_code', { maxlength: 20, placeholder: 'Deve ser um cupom ativo' }) };
+    const sec = Object.fromEntries(['sec_bestseller', 'sec_featured', 'sec_new', 'sec_how', 'sec_faq', 'popup_enabled'].map(k => [k, h('input', { type: 'checkbox', checked: s[k] !== '0' })]));
+    const form = h('form', { class: 'form card', onsubmit: async ev => { ev.preventDefault(); try { await api('/api/admin/settings', { method: 'PUT', body: { ...Object.fromEntries(Object.entries(e).map(([k, v]) => [k, v.value])), combo_enabled: cb.en.checked ? '1' : '0', combo_qty: cb.qty.value, combo_unit_cents: c100(cb.unit.value), combo_price_cents: c100(cb.price.value), ...Object.fromEntries(Object.entries(tx).map(([k, v]) => [k, v.value])), ...Object.fromEntries(Object.entries(sec).map(([k, v]) => [k, v.checked ? '1' : '0'])) } }); toast('Configurações salvas.'); } catch (er) { toast(er.message, 'err'); } } }, field('Nome da loja', e.store_name), field('WhatsApp oficial (só dígitos, com DDI)', e.whatsapp_number, 'Ex.: 5511999999999'), field('Mensagem inicial do WhatsApp', e.whatsapp_message, 'Use {pedido} onde o código do pedido deve entrar.'), field('Texto de suporte (rodapé)', e.support_text), field('Instagram (URL https)', e.instagram_url), field('Alerta: pedido pendente após (horas)', e.alert_pending_hours), field('Alerta: estoque baixo até (unidades)', e.alert_low_stock),
+      h('h2', {}, 'Textos da página inicial'), field('Selo acima do título', tx.hero_eyebrow, 'Vazio = texto padrão.'), field('Título', tx.hero_title), field('Parte colorida do título', tx.hero_title_grad), field('Subtítulo', tx.hero_lead),
+      field('Faixa de avisos do topo (um por linha)', tx.ticker_text), field('Passos do "Como comprar" (formato: Título ## Descrição, um por linha, ideal 4)', tx.steps_text), field('Perguntas frequentes (formato: Pergunta ## Resposta, uma por linha)', tx.faq_text), field('Texto legal do rodapé', tx.legal_text),
+      h('h2', {}, 'Seções da página inicial'), h('label', { class: 'check' }, sec.sec_bestseller, ' Mais vendidos'), h('label', { class: 'check' }, sec.sec_featured, ' Em destaque'), h('label', { class: 'check' }, sec.sec_new, ' Novidades'), h('label', { class: 'check' }, sec.sec_how, ' Como comprar'), h('label', { class: 'check' }, sec.sec_faq, ' Perguntas frequentes'),
+      h('h2', {}, 'Pop-up de cupom'), h('label', { class: 'check' }, sec.popup_enabled, ' Pop-up ativo'), field('Código do cupom', tx.popup_code, 'Crie o cupom antes em Cupons. O pop-up só aparece com código preenchido.'), field('Título', tx.popup_title), field('Texto', tx.popup_text),
       h('h2', {}, 'Combo promocional'), h('label', { class: 'check' }, cb.en, ' Combo ativo'), field('Quantidade do combo', cb.qty), field('Preço unitário que entra no combo (R$)', cb.unit, 'Vale para qualquer produto cujo preço final (inclusive em promoção) seja exatamente este valor; pode misturar.'), field('Preço do combo (R$)', cb.price, 'Deve ser menor que quantidade × preço unitário.'),
       h('button', { class: 'btn btn-primary', type: 'submit' }, 'Salvar'));
     const pf = pages.map(p => { const t = h('input', { type: 'text', value: p.title, maxlength: 120 }), b = h('textarea', { rows: 8, maxlength: 20000 }, p.body); return h('form', { class: 'form card', onsubmit: async ev => { ev.preventDefault(); try { await api('/api/admin/pages/' + p.slug, { method: 'PUT', body: { title: t.value, body: b.value } }); toast('Página salva.'); } catch (er) { toast(er.message, 'err'); } } }, h('h3', {}, p.slug), field('Título', t), field('Texto (modelo editável — revise juridicamente)', b), h('button', { class: 'btn', type: 'submit' }, 'Salvar página')); });
