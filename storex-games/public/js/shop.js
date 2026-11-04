@@ -176,11 +176,7 @@ export const STEPS = [
     "Receba as instruções",
     "Após a confirmação do pagamento, elas aparecem no seu pedido.",
   ],
-  [
-    "whatsapp",
-    "Conte com o suporte",
-    "Dúvidas? Fale com a gente no WhatsApp.",
-  ],
+  ["whatsapp", "Conte com o suporte", "Dúvidas? Fale com a gente no WhatsApp."],
 ];
 export const FAQ = [
   [
@@ -429,8 +425,9 @@ export async function home() {
       h(
         "h1",
         {},
-        (st.hero_title || "Seu próximo jogo começa") + " ",
-        h("span", { class: "grad" }, st.hero_title_grad || "aqui"),
+        (st.hero_title || "Não achou no site? Nos chame no") + " ",
+        h("span", { class: "grad" }, st.hero_title_grad || "WhatsApp"),
+        " " + (st.hero_title_end || "e descubra mais itens!"),
       ),
       h(
         "p",
@@ -642,10 +639,20 @@ export async function home() {
   initCategoryCarousel($(".tiles"));
   const [b, f, n] = await Promise.all([
     on("sec_bestseller")
-      ? strip("Mais vendidos", "Preferidos dos clientes", "bestseller=1&sort=bestseller", null)
+      ? strip(
+          "Mais vendidos",
+          "Preferidos dos clientes",
+          "bestseller=1&sort=bestseller",
+          null,
+        )
       : null,
     on("sec_featured")
-      ? strip("Em destaque", "Selecionados", "featured=1", "/produtos?sort=relevance")
+      ? strip(
+          "Em destaque",
+          "Selecionados",
+          "featured=1",
+          "/produtos?sort=relevance",
+        )
       : null,
     on("sec_new")
       ? strip("Novidades", "Chegou agora", "new=1", "/produtos?sort=newest")
@@ -1137,7 +1144,9 @@ export async function product(slug) {
     ]);
     const cfg = comboCfg(st);
     setPage(p.name, {
-      desc: (p.long_description || "").replace(/\s+/g, " ").slice(0, 160) || undefined,
+      desc:
+        (p.long_description || "").replace(/\s+/g, " ").slice(0, 160) ||
+        undefined,
     });
     const imgs = p.images?.length ? p.images : [];
     const main = imgOrPlaceholder(
@@ -1304,10 +1313,9 @@ export async function cart() {
   mount(loading());
   try {
     const [r, st, up] = await Promise.all([
-      api(
-        "/api/products?pageSize=48&ids=" + items.map((i) => i.id).join(","),
-        { auth: false },
-      ),
+      api("/api/products?pageSize=48&ids=" + items.map((i) => i.id).join(","), {
+        auth: false,
+      }),
       settings(),
       api("/api/products?pageSize=8&upsell=1", { auth: false }).catch(() => ({
         items: [],
