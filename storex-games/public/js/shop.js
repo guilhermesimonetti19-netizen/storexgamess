@@ -28,6 +28,7 @@ import {
 } from "./cart.js";
 import { isLoggedIn } from "./auth.js";
 import { comboCfg, comboDiscount } from "./combo.js";
+import { track } from "./track.js";
 
 const XBOX_VERSIONS = ["XBOX ONE E SERIES X|S", "XBOX SERIES X|S", "XBOX 360"];
 const T = (tag, cls, ...k) => h(tag, { class: cls }, ...k);
@@ -425,7 +426,7 @@ export async function home() {
       h(
         "h1",
         {},
-        (st.hero_title || "Não achou no site? Nos chame no") + " ",
+        (st.hero_title || "Não achou no site? Fale no") + " ",
         h("span", { class: "grad" }, st.hero_title_grad || "WhatsApp"),
         " " + (st.hero_title_end || "e descubra mais itens!"),
       ),
@@ -748,6 +749,7 @@ export async function catalog(categorySlug) {
   const page = Math.max(1, Number(qs.get("page")) || 1);
   const base = location.pathname;
   const catKey = categorySlug || qs.get("category") || "";
+  if (qs.get("q")) track("search", { term: qs.get("q") });
   const isXbox = catKey === "jogos-videogames";
   const [cats, plats] = await Promise.all([
     api("/api/categories", { auth: false }).catch(() => []),
@@ -1143,6 +1145,7 @@ export async function product(slug) {
       settings(),
     ]);
     const cfg = comboCfg(st);
+    track("product_view", { productId: p.id });
     setPage(p.name, {
       desc:
         (p.long_description || "").replace(/\s+/g, " ").slice(0, 160) ||
@@ -1209,12 +1212,14 @@ export async function product(slug) {
               p.category_name,
             ),
           priceBlock(p),
-          cfg &&
-            p.effective_price_cents === cfg.unit &&
-            h(
-              "p",
-              { class: "tag" },
-              `Leve ${cfg.qty} por ${money(cfg.price)} (pode misturar)`,
+          cfg
+            .filter((c) => c.unit === p.effective_price_cents)
+            .map((c) =>
+              h(
+                "p",
+                { class: "tag" },
+                `Leve ${c.qty} por ${money(c.price)} (pode misturar)`,
+              ),
             ),
           p.in_stock
             ? h(
@@ -1397,6 +1402,7 @@ export async function cart() {
       if (!isLoggedIn()) return go("/entrar?next=/carrinho");
       btn.disabled = true;
       btn.textContent = "Processando…";
+      track("checkout_start");
       try {
         const o = await api("/api/orders", {
           method: "POST",
@@ -1503,7 +1509,7 @@ export async function cart() {
             h(
               "p",
               { class: "note" },
-              `Combo ${cfg.qty} por ${money(cfg.price)} aplicado: -${money(disc)}`,
+              `Combos promocionais aplicados: -${money(disc)}`,
             ),
           h("div", { class: "row" }, cpIn, cpBtn),
           cpMsg,

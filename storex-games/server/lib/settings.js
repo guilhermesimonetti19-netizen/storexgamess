@@ -1,5 +1,5 @@
 export const PUBLIC_SETTING_KEYS = ['store_name', 'whatsapp_number', 'whatsapp_message', 'support_text', 'instagram_url', 'combo_enabled', 'combo_qty', 'combo_unit_cents', 'combo_price_cents',
-  'hero_eyebrow', 'hero_title', 'hero_title_grad', 'hero_lead', 'ticker_text', 'faq_text', 'steps_text', 'legal_text', 'popup_enabled', 'popup_title', 'popup_text', 'popup_code', 'sec_how', 'sec_featured', 'sec_new', 'sec_bestseller', 'sec_faq'];
+  'hero_eyebrow', 'hero_title', 'hero_title_grad', 'hero_lead', 'ticker_text', 'faq_text', 'steps_text', 'legal_text', 'popup_enabled', 'popup_title', 'popup_text', 'popup_code', 'sec_how', 'sec_featured', 'sec_new', 'sec_bestseller', 'sec_faq', 'combos_json'];
 export const ALL_SETTING_KEYS = [...PUBLIC_SETTING_KEYS, 'alert_pending_hours', 'alert_low_stock'];
 export async function loadSettings(db, keys = ALL_SETTING_KEYS) {
   const { rows } = await db.select('store_settings', { filters: { key: `in.(${keys.join(',')})` } });

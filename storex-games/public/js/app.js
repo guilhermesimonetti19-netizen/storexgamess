@@ -2,6 +2,7 @@ import { h, a, $, go, mount, setPage, icon, toast } from './ui.js';
 import { api, settings } from './api.js';
 import { consumeHash, isLoggedIn, onAuth } from './auth.js';
 import { cartCount } from './cart.js';
+import { track } from './track.js';
 import * as shop from './shop.js';
 import * as acc from './account.js';
 
@@ -20,6 +21,7 @@ function layout() {
     h('div', { class: 'ticker', role: 'region', 'aria-label': 'Avisos da loja' }, ticker(tk), (() => { const d = ticker(tk); d.setAttribute('aria-hidden', 'true'); return d; })()),
     h('div', { class: 'hdr' }, h('div', { class: 'wrap hdr-in' }, burger,
       a('/', { class: 'logo', 'aria-label': 'StoreX Games — início' }, h('img', { src: '/assets/logo.webp', alt: '', width: 44, height: 44 }), h('span', { class: 'logo-txt' }, h('b', {}, 'Store', h('i', {}, 'X')), h('small', {}, 'Games'))),
+      h('a', { class: 'icon-btn ig-btn', href: 'https://www.instagram.com/storexgamess', target: '_blank', rel: 'noopener noreferrer', 'aria-label': 'Instagram da StoreX Games' }, icon('instagram', { size: 22 })),
       nav,
       h('form', { class: 'search', role: 'search', onsubmit: e => { e.preventDefault(); go('/produtos?q=' + encodeURIComponent(q.value.trim())); } }, icon('search', { size: 18 }), q),
       h('div', { class: 'hdr-actions' }, acct, a('/carrinho', { class: 'icon-btn cart-btn', 'aria-label': 'Carrinho' }, icon('cart', { size: 22 }), count, sr)))));
@@ -48,6 +50,7 @@ function layout() {
 async function route() {
   document.querySelector('#nav')?.classList.remove('open'); document.body.classList.remove('nav-open'); document.querySelector('.burger')?.setAttribute('aria-expanded', 'false');
   const path = location.pathname.replace(/\/+$/, '') || '/'; let m;
+  track('page_view');
   if (path === '/') return shop.home();
   if (path === '/produtos') return shop.catalog();
   if ((m = path.match(/^\/categoria\/([a-z0-9-]+)$/))) return shop.catalog(m[1]);

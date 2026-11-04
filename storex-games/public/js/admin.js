@@ -3,7 +3,7 @@ import { api } from './api.js';
 import { isLoggedIn } from './auth.js';
 import { FAQ, STEPS } from './shop.js';
 
-const NAV = [['/admin', 'Dashboard', 'bolt'], ['/admin/produtos', 'Produtos', 'package'], ['/admin/mais-vendidos', 'Mais vendidos', 'star'], ['/admin/pedidos', 'Pedidos', 'receipt'], ['/admin/relatorios', 'Relatórios', 'tag'], ['/admin/cupons', 'Cupons', 'tag'], ['/admin/configuracoes', 'Configurações', 'key'], ['/admin/auditoria', 'Auditoria', 'clock']];
+const NAV = [['/admin', 'Dashboard', 'bolt'], ['/admin/analytics', 'Analytics', 'eye'], ['/admin/produtos', 'Produtos', 'package'], ['/admin/mais-vendidos', 'Mais vendidos', 'star'], ['/admin/pedidos', 'Pedidos', 'receipt'], ['/admin/relatorios', 'Relatórios', 'tag'], ['/admin/cupons', 'Cupons', 'tag'], ['/admin/configuracoes', 'Configurações', 'key'], ['/admin/auditoria', 'Auditoria', 'clock']];
 const shell = (path, ...content) => mount(h('div', { class: 'wrap page admin' }, h('nav', { class: 'admin-nav', 'aria-label': 'Administração' }, NAV.map(([p, t, ic]) => a(p, { 'aria-current': (p === '/admin' ? path === p : path.startsWith(p)) ? 'page' : null }, icon(ic, { size: 18 }), t))), h('section', { class: 'admin-main' }, content)));
 const tbl = (cols, rows) => rows.length ? h('div', { class: 'table-wrap' }, h('table', {}, h('thead', {}, h('tr', {}, cols.map(c => h('th', { scope: 'col' }, c)))), h('tbody', {}, rows))) : empty('Nenhum registro.');
 const pager = (r, fn) => h('nav', { class: 'pager' }, r.page > 1 && h('button', { class: 'btn', onclick: () => fn(r.page - 1) }, '←'), h('span', {}, `Página ${r.page} • ${r.total} registro(s)`), r.page * (r.pageSize || 20) < r.total && h('button', { class: 'btn', onclick: () => fn(r.page + 1) }, '→'));
@@ -16,6 +16,7 @@ export async function admin(path) {
   try { const me = await api('/api/me'); if (!me.isAdmin) return mount(h('div', { class: 'state err', role: 'alert' }, h('h1', {}, 'Acesso negado'), h('p', {}, 'Esta área é restrita ao administrador.'), a('/', { class: 'btn' }, 'Voltar'))); } catch (e) { return mount(errorBox(e.message, () => admin(path))); }
   let m;
   if (path === '/admin') return dashboard(path);
+  if (path === '/admin/analytics') return analyticsPage(path);
   if (path === '/admin/produtos') return products(path);
   if (path === '/admin/produtos/novo') return productForm(path, null);
   if ((m = path.match(/^\/admin\/produtos\/([0-9a-f-]{36})$/))) return productForm(path, m[1]);
@@ -115,11 +116,78 @@ async function dashboard(path) {
   shell(path, h('h1', {}, 'Dashboard'), h('div', { class: 'row' }, btns, custom, h('button', { class: 'btn', onclick: load }, '↻ Atualizar'), stamp), body); load();
 }
 
+// ---------- Analytics (eventos anônimos de navegação) ----------
+async function analyticsPage(path) {
+  let preset = '30d'; const body = h('div', { 'aria-live': 'polite' }, loading()), stamp = h('small', { class: 'muted' });
+  const range = () => { const end = new Date(), today = spDay(); const f = preset === 'today' ? spStart(today) : preset === '7d' ? new Date(end - 7 * 864e5) : preset === 'month' ? spStart(today.slice(0, 8) + '01') : new Date(end - 30 * 864e5); return { from: f.toISOString(), to: end.toISOString() }; };
+  const btns = [['today', 'Hoje'], ['7d', '7 dias'], ['30d', '30 dias'], ['month', 'Mês atual']].map(([k, t]) => h('button', { class: 'btn' + (k === preset ? ' btn-primary' : ''), type: 'button', 'data-k': k, onclick: () => { preset = k; btns.forEach(b => b.classList.toggle('btn-primary', b.dataset.k === k)); load(); } }, t));
+  async function load() {
+    body.replaceChildren(loading());
+    try {
+      const r = range(), days = (Date.parse(r.to) - Date.parse(r.from)) / 864e5, bucket = days > 120 ? 'month' : days > 45 ? 'week' : 'day';
+      const d = await api(`/api/admin/analytics?from=${encodeURIComponent(r.from)}&to=${encodeURIComponent(r.to)}&bucket=${bucket}`);
+      const t = d.totals, f = d.funnel, rate = (x, y) => y ? (x / y * 100).toFixed(1) + '%' : '—', nb = ({ day: 'dia', week: 'semana', month: 'mês' })[bucket];
+      stamp.textContent = 'Atualizado em ' + fmtDate(d.generated_at);
+      const HB = (title, rows, l, v) => hbars(title, rows.map(x => ({ l: l(x), v: v(x) })), String);
+      const dev = { mobile: 'Celular', tablet: 'Tablet', desktop: 'Computador' };
+      const pt = rows => tbl(['Produto', 'Visualizações', 'No carrinho', 'Vendidos', 'Visualização → carrinho'], rows.map(p => h('tr', {}, h('td', {}, p.name), h('td', {}, p.views), h('td', {}, p.carts), h('td', {}, p.sold), h('td', {}, rate(p.carts, p.views)))));
+      body.replaceChildren(
+        h('div', { class: 'kpis' }, kpi('Sessões', String(t.sessions), 'Abas/visitas anônimas', 'eye', 1), kpi('Páginas vistas', String(t.pageviews), `${t.sessions ? (t.pageviews / t.sessions).toFixed(1) : 0} por sessão`, 'receipt', 1), kpi('Visualizações de produto', String(t.product_views), null, 'package', 1), kpi('Adições ao carrinho', String(t.add_to_cart), null, 'cart', 1)),
+        h('div', { class: 'kpis sm' }, kpi('Viram um produto', rate(f.product_view, f.sessions), 'das sessões'), kpi('Adicionaram ao carrinho', rate(f.add_to_cart, f.sessions), 'das sessões'), kpi('Iniciaram checkout', rate(f.checkout_start, f.sessions), 'das sessões'), kpi('Conversão em venda', rate(f.paid_orders, f.sessions), `${f.paid_orders} pedido(s) pago(s)`), kpi('Buscas no site', String(t.searches))),
+        h('div', { class: 'charts' },
+          lineChart('Sessões por ' + nb, d.series.map(x => ({ l: x.d, v: x.sessions }))),
+          lineChart('Páginas vistas por ' + nb, d.series.map(x => ({ l: x.d, v: x.pageviews }))),
+          HB('Funil de conversão (sessões)', [['Sessões', f.sessions], ['Viram um produto', f.product_view], ['Adicionaram ao carrinho', f.add_to_cart], ['Iniciaram checkout', f.checkout_start], ['Pedidos pagos', f.paid_orders]], x => x[0], x => x[1]),
+          HB('Páginas mais visitadas', d.top_pages, x => x.path, x => x.n),
+          HB('Origem do tráfego (sites de referência)', d.referrers, x => x.referrer, x => x.n),
+          HB('Dispositivos', d.devices, x => dev[x.device] || x.device, x => x.n),
+          HB('Termos mais buscados', d.searches, x => x.term, x => x.n),
+          HB('Horários de pico (páginas vistas)', d.hours, x => x.h + 'h', x => x.n)),
+        h('h2', {}, 'Produtos mais vistos'), pt(d.products.slice(0, 15)),
+        h('h2', {}, 'Mais adicionados ao carrinho'), pt(d.products.filter(p => p.carts > 0).sort((x, y) => y.carts - x.carts).slice(0, 15)),
+        h('p', { class: 'note' }, 'Sessão = aba/visita anônima (não identifica pessoas; a mesma pessoa pode gerar várias). A coleta começa após a publicação e não conta quem bloqueia rastreio ou usa "Do Not Track".'));
+    } catch (e) { body.replaceChildren(errorBox(e.message, load)); }
+  }
+  shell(path, h('h1', {}, 'Analytics'), h('div', { class: 'row' }, btns, h('button', { class: 'btn', onclick: load }, '↻ Atualizar'), stamp), body); load();
+}
+
+// ---------- Produtos (com edição em massa) ----------
 async function products(path, page = 1) {
-  const out = h('div', {}, loading()); const q = h('input', { type: 'search', placeholder: 'Buscar produto' });
-  shell(path, h('h1', {}, 'Produtos'), h('div', { class: 'row' }, a('/admin/produtos/novo', { class: 'btn btn-primary' }, 'Novo produto'), h('form', { onsubmit: e => { e.preventDefault(); load(1); } }, q, h('button', { class: 'btn', type: 'submit' }, 'Buscar'))), out);
-  async function load(pg) { try { const r = await api(`/api/admin/products?page=${pg}&q=${encodeURIComponent(q.value)}`); out.replaceChildren(tbl(['Nome', 'Plataforma', 'Preço', 'Estoque', 'Status', ''], r.items.map(p => h('tr', {}, h('td', {}, p.name), h('td', {}, p.platform || '—'), h('td', {}, money(p.price_cents), p.promo_price_cents && ` (promo ${money(p.promo_price_cents)})`), h('td', {}, p.track_stock ? p.stock : '—'), h('td', {}, p.is_active ? 'Ativo' : 'Inativo'), h('td', {}, a('/admin/produtos/' + p.id, { class: 'btn' }, 'Editar')))), pager(r, load))); out.append(pager({ ...r, pageSize: 20 }, load)); } catch (e) { out.replaceChildren(errorBox(e.message, () => load(pg))); } }
-  load(page);
+  const out = h('div', {}, loading()), q = h('input', { type: 'search', placeholder: 'Buscar produto', 'aria-label': 'Buscar produto' }), sel = new Set(), cnt = h('strong'), bulk = h('div', { class: 'card form', hidden: true });
+  let items = [], last = { page: 1, total: 0, pageSize: 20 };
+  shell(path, h('h1', {}, 'Produtos'), h('div', { class: 'row' }, a('/admin/produtos/novo', { class: 'btn btn-primary' }, 'Novo produto'), h('form', { onsubmit: e => { e.preventDefault(); load(1); } }, q, h('button', { class: 'btn', type: 'submit' }, 'Buscar'))), bulk, out);
+  const sync = () => { bulk.hidden = !sel.size; cnt.textContent = sel.size + ' selecionado(s)'; };
+  const tri = t => h('select', { 'aria-label': t }, h('option', { value: '' }, t + ': não alterar'), h('option', { value: '1' }, t + ': sim'), h('option', { value: '0' }, t + ': não'));
+  const cats = await api('/api/admin/categories').catch(() => []);
+  const f = { is_active: tri('Ativo'), is_featured: tri('Destaque'), is_new: tri('Novidade'), is_upsell: tri('Leve também') };
+  const cat = h('select', { 'aria-label': 'Categoria' }, h('option', { value: '' }, 'Categoria: não alterar'), h('option', { value: '__none' }, 'Sem categoria'), cats.map(c => h('option', { value: c.id }, c.name)));
+  const plat = h('input', { type: 'text', maxlength: 60, placeholder: 'Plataforma (vazio = não alterar)', 'aria-label': 'Plataforma' });
+  const maxq = h('input', { type: 'number', min: 1, max: 10, placeholder: 'Máx. por pedido', 'aria-label': 'Máx. por pedido' });
+  const adj = h('input', { type: 'number', step: '0.1', min: -90, max: 500, placeholder: 'Ajuste de preço % (ex.: 10 ou -5)', 'aria-label': 'Ajuste de preço em porcentagem' });
+  const promo = h('input', { type: 'number', min: 1, max: 90, placeholder: 'Promoção: % de desconto', 'aria-label': 'Promoção em porcentagem' });
+  const clr = h('input', { type: 'checkbox' });
+  const apply = h('button', { class: 'btn btn-primary', type: 'button', onclick: async () => {
+    const ch = {};
+    for (const [k, s] of Object.entries(f)) if (s.value !== '') ch[k] = s.value === '1';
+    if (cat.value) ch.category_id = cat.value === '__none' ? null : cat.value;
+    if (plat.value.trim()) ch.platform = plat.value.trim();
+    if (maxq.value) ch.max_per_order = Number(maxq.value);
+    if (adj.value) ch.price_adjust_pct = Number(adj.value);
+    if (promo.value) ch.promo_pct = Number(promo.value);
+    if (clr.checked) ch.clear_promo = true;
+    if (!Object.keys(ch).length) return toast('Escolha ao menos uma alteração.', 'err');
+    if (!confirm(`Aplicar as alterações a ${sel.size} produto(s)?`)) return;
+    try { const r = await api('/api/admin/products-bulk', { method: 'POST', body: { ids: [...sel], changes: ch } }); toast(`${r.updated} produto(s) atualizado(s).`); sel.clear(); sync(); load(last.page || 1); } catch (e) { toast(e.message, 'err'); }
+  } }, 'Aplicar aos selecionados');
+  bulk.append(cnt, h('div', { class: 'form-grid' }, ...Object.values(f), cat, plat, maxq, adj, promo), h('label', { class: 'check' }, clr, ' Remover promoção'),
+    h('div', { class: 'row' }, apply, h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => { sel.clear(); sync(); render(); } }, 'Limpar seleção')));
+  const chk = p => h('input', { type: 'checkbox', checked: sel.has(p.id), 'aria-label': 'Selecionar ' + p.name, onchange: e => { e.target.checked ? sel.add(p.id) : sel.delete(p.id); sync(); } });
+  const render = () => {
+    const all = h('input', { type: 'checkbox', 'aria-label': 'Selecionar todos desta página', checked: items.length > 0 && items.every(p => sel.has(p.id)), onchange: e => { items.forEach(p => e.target.checked ? sel.add(p.id) : sel.delete(p.id)); sync(); render(); } });
+    out.replaceChildren(tbl([all, 'Nome', 'Plataforma', 'Preço', 'Estoque', 'Status', ''], items.map(p => h('tr', {}, h('td', {}, chk(p)), h('td', {}, p.name), h('td', {}, p.platform || '—'), h('td', {}, money(p.price_cents), p.promo_price_cents && ` (promo ${money(p.promo_price_cents)})`), h('td', {}, p.track_stock ? p.stock : '—'), h('td', {}, p.is_active ? 'Ativo' : 'Inativo'), h('td', {}, a('/admin/produtos/' + p.id, { class: 'btn' }, 'Editar'))))), pager(last, load));
+  };
+  async function load(pg) { try { const r = await api(`/api/admin/products?page=${pg}&q=${encodeURIComponent(q.value)}`); items = r.items; last = { ...r, pageSize: 20 }; render(); } catch (e) { out.replaceChildren(errorBox(e.message, () => load(pg))); } }
+  sync(); load(page);
 }
 
 async function productForm(path, id) {
@@ -279,6 +347,19 @@ async function settingsPage(path) {
     const { settings: s, pages } = await api('/api/admin/settings'); const i = (k, o = {}) => h('input', { type: 'text', value: s[k] ?? '', ...o }); const e = { store_name: i('store_name', { maxlength: 80 }), whatsapp_number: i('whatsapp_number', { inputmode: 'numeric', placeholder: '5511999999999' }), whatsapp_message: h('textarea', { rows: 3, maxlength: 500 }, s.whatsapp_message ?? ''), support_text: i('support_text', { maxlength: 200 }), instagram_url: i('instagram_url', { placeholder: 'https://instagram.com/…' }), alert_pending_hours: i('alert_pending_hours', { inputmode: 'numeric' }), alert_low_stock: i('alert_low_stock', { inputmode: 'numeric' }) };
     const cb = { en: h('input', { type: 'checkbox', checked: s.combo_enabled === '1' }), qty: h('input', { type: 'number', min: 2, max: 10, value: s.combo_qty || 2 }), unit: h('input', { type: 'number', step: '0.01', min: '0.01', value: ((Number(s.combo_unit_cents) || 3000) / 100).toFixed(2) }), price: h('input', { type: 'number', step: '0.01', min: '0.01', value: ((Number(s.combo_price_cents) || 4500) / 100).toFixed(2) }) };
     const c100 = v => String(Math.round(Number(v) * 100));
+    // ---- combos adicionais (além do combo principal) ----
+    let extra = []; try { extra = JSON.parse(s.combos_json || '[]'); } catch { /* */ }
+    const exBox = h('div'), cents = v => Math.round(Number(v) * 100);
+    const drawEx = () => exBox.replaceChildren(...extra.map((c, idx) => {
+      const n = h('input', { type: 'text', maxlength: 40, value: c.name || '', placeholder: 'Ex.: 3 por R$ 60' }), q = h('input', { type: 'number', min: 2, max: 10, value: c.qty }),
+        u = h('input', { type: 'number', step: '0.01', min: '0.01', value: (c.unit / 100).toFixed(2) }), p = h('input', { type: 'number', step: '0.01', min: '0.01', value: (c.price / 100).toFixed(2) }), on = h('input', { type: 'checkbox', checked: c.on !== false });
+      const sync = () => { extra[idx] = { name: n.value, qty: Number(q.value), unit: cents(u.value), price: cents(p.value), on: on.checked }; };
+      [n, q, u, p, on].forEach(x => { x.addEventListener('input', sync); x.addEventListener('change', sync); });
+      return h('div', { class: 'form-grid card' }, field('Nome', n), field('Quantidade', q), field('Preço unitário (R$)', u), field('Preço do combo (R$)', p), h('label', { class: 'check' }, on, ' Ativo'),
+        h('button', { class: 'btn btn-danger btn-sm', type: 'button', onclick: () => { extra.splice(idx, 1); drawEx(); } }, 'Remover'));
+    }));
+    drawEx();
+    const addEx = h('button', { class: 'btn', type: 'button', onclick: () => { if (extra.length >= 20) return toast('Máximo de 20.', 'err'); extra.push({ name: '', qty: 3, unit: 3000, price: 6000, on: true }); drawEx(); } }, '+ Adicionar combo');
     // ---- textos e seções da loja editáveis ----
     const ta = (k, rows, max, fb = '') => h('textarea', { rows, maxlength: max }, s[k] ?? fb);
     const tx = { hero_eyebrow: i('hero_eyebrow', { maxlength: 80 }), hero_title: i('hero_title', { maxlength: 120 }), hero_title_grad: i('hero_title_grad', { maxlength: 40 }), hero_lead: ta('hero_lead', 3, 400),
@@ -286,12 +367,13 @@ async function settingsPage(path) {
       faq_text: ta('faq_text', 12, 3500, FAQ.map(([q, r]) => q + ' ## ' + r).join('\n')), steps_text: ta('steps_text', 5, 1200, STEPS.map(([, t, d]) => t + ' ## ' + d).join('\n')),
       legal_text: ta('legal_text', 3, 800), popup_title: i('popup_title', { maxlength: 80 }), popup_text: i('popup_text', { maxlength: 200 }), popup_code: i('popup_code', { maxlength: 20, placeholder: 'Deve ser um cupom ativo' }) };
     const sec = Object.fromEntries(['sec_bestseller', 'sec_featured', 'sec_new', 'sec_how', 'sec_faq', 'popup_enabled'].map(k => [k, h('input', { type: 'checkbox', checked: s[k] !== '0' })]));
-    const form = h('form', { class: 'form card', onsubmit: async ev => { ev.preventDefault(); try { await api('/api/admin/settings', { method: 'PUT', body: { ...Object.fromEntries(Object.entries(e).map(([k, v]) => [k, v.value])), combo_enabled: cb.en.checked ? '1' : '0', combo_qty: cb.qty.value, combo_unit_cents: c100(cb.unit.value), combo_price_cents: c100(cb.price.value), ...Object.fromEntries(Object.entries(tx).map(([k, v]) => [k, v.value])), ...Object.fromEntries(Object.entries(sec).map(([k, v]) => [k, v.checked ? '1' : '0'])) } }); toast('Configurações salvas.'); } catch (er) { toast(er.message, 'err'); } } }, field('Nome da loja', e.store_name), field('WhatsApp oficial (só dígitos, com DDI)', e.whatsapp_number, 'Ex.: 5511999999999'), field('Mensagem inicial do WhatsApp', e.whatsapp_message, 'Use {pedido} onde o código do pedido deve entrar.'), field('Texto de suporte (rodapé)', e.support_text), field('Instagram (URL https)', e.instagram_url), field('Alerta: pedido pendente após (horas)', e.alert_pending_hours), field('Alerta: estoque baixo até (unidades)', e.alert_low_stock),
+    const form = h('form', { class: 'form card', onsubmit: async ev => { ev.preventDefault(); try { await api('/api/admin/settings', { method: 'PUT', body: { ...Object.fromEntries(Object.entries(e).map(([k, v]) => [k, v.value])), combo_enabled: cb.en.checked ? '1' : '0', combo_qty: cb.qty.value, combo_unit_cents: c100(cb.unit.value), combo_price_cents: c100(cb.price.value), combos_json: JSON.stringify(extra), ...Object.fromEntries(Object.entries(tx).map(([k, v]) => [k, v.value])), ...Object.fromEntries(Object.entries(sec).map(([k, v]) => [k, v.checked ? '1' : '0'])) } }); toast('Configurações salvas.'); } catch (er) { toast(er.message, 'err'); } } }, field('Nome da loja', e.store_name), field('WhatsApp oficial (só dígitos, com DDI)', e.whatsapp_number, 'Ex.: 5511999999999'), field('Mensagem inicial do WhatsApp', e.whatsapp_message, 'Use {pedido} onde o código do pedido deve entrar.'), field('Texto de suporte (rodapé)', e.support_text), field('Instagram (URL https)', e.instagram_url), field('Alerta: pedido pendente após (horas)', e.alert_pending_hours), field('Alerta: estoque baixo até (unidades)', e.alert_low_stock),
       h('h2', {}, 'Textos da página inicial'), field('Selo acima do título', tx.hero_eyebrow, 'Vazio = texto padrão.'), field('Título', tx.hero_title), field('Parte colorida do título', tx.hero_title_grad), field('Subtítulo', tx.hero_lead),
       field('Faixa de avisos do topo (um por linha)', tx.ticker_text), field('Passos do "Como comprar" (formato: Título ## Descrição, um por linha, ideal 4)', tx.steps_text), field('Perguntas frequentes (formato: Pergunta ## Resposta, uma por linha)', tx.faq_text), field('Texto legal do rodapé', tx.legal_text),
       h('h2', {}, 'Seções da página inicial'), h('label', { class: 'check' }, sec.sec_bestseller, ' Mais vendidos'), h('label', { class: 'check' }, sec.sec_featured, ' Em destaque'), h('label', { class: 'check' }, sec.sec_new, ' Novidades'), h('label', { class: 'check' }, sec.sec_how, ' Como comprar'), h('label', { class: 'check' }, sec.sec_faq, ' Perguntas frequentes'),
       h('h2', {}, 'Pop-up de cupom'), h('label', { class: 'check' }, sec.popup_enabled, ' Pop-up ativo'), field('Código do cupom', tx.popup_code, 'Crie o cupom antes em Cupons. O pop-up só aparece com código preenchido.'), field('Título', tx.popup_title), field('Texto', tx.popup_text),
       h('h2', {}, 'Combo promocional'), h('label', { class: 'check' }, cb.en, ' Combo ativo'), field('Quantidade do combo', cb.qty), field('Preço unitário que entra no combo (R$)', cb.unit, 'Vale para qualquer produto cujo preço final (inclusive em promoção) seja exatamente este valor; pode misturar.'), field('Preço do combo (R$)', cb.price, 'Deve ser menor que quantidade × preço unitário.'),
+      h('h3', {}, 'Combos adicionais'), exBox, addEx,
       h('button', { class: 'btn btn-primary', type: 'submit' }, 'Salvar'));
     const pf = pages.map(p => { const t = h('input', { type: 'text', value: p.title, maxlength: 120 }), b = h('textarea', { rows: 8, maxlength: 20000 }, p.body); return h('form', { class: 'form card', onsubmit: async ev => { ev.preventDefault(); try { await api('/api/admin/pages/' + p.slug, { method: 'PUT', body: { title: t.value, body: b.value } }); toast('Página salva.'); } catch (er) { toast(er.message, 'err'); } } }, h('h3', {}, p.slug), field('Título', t), field('Texto (modelo editável — revise juridicamente)', b), h('button', { class: 'btn', type: 'submit' }, 'Salvar página')); });
     out.replaceChildren(form, h('h2', {}, 'Páginas institucionais'), ...pf);

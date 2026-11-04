@@ -32,10 +32,11 @@ import {
 } from "./lib/orders.js";
 import { verifyAndApply, flagRefund, audit, logEvent } from "./lib/payments.js";
 import { isConfigured } from "./lib/infinitepay.js";
+import { normCombos } from "./lib/combo.js";
 
 const PAGE_SIZE = 12;
 const XBOX_VERSIONS = ["XBOX ONE E SERIES X|S", "XBOX SERIES X|S", "XBOX 360"];
-const LONG_SETTING_KEYS = ["faq_text", "steps_text", "ticker_text", "legal_text"];
+const LONG_SETTING_KEYS = ["faq_text", "steps_text", "ticker_text", "legal_text", "combos_json"];
 const SORTS = {
   relevance: "is_featured.desc,created_at.desc",
   price_asc: "effective_price_cents.asc",
@@ -244,6 +245,27 @@ export function createApp({
   });
   R("GET", "/api/products", "public", listProducts);
   R("GET", "/api/products/:slug", "public", getProduct);
+
+  // ----- Analytics (anônimo: sem IP, sem cookie; o IP só alimenta o rate limit em memória) -----
+  R("POST", "/api/track", "public", async (ctx) => {
+    const none = () => new Response(null, { status: 204 });
+    const ua = ctx.request.headers.get("user-agent") || "";
+    if (!ua || /bot|crawl|spider|slurp|headless|preview|monitor/i.test(ua)) return none();
+    const ip = ctx.request.headers.get("cf-connecting-ip") || ctx.request.headers.get("x-forwarded-for") || "x";
+    if (!rateLimit(`tr:${ip}`, 120, 60_000)) return none();
+    let b; try { b = await readJson(ctx.request, 2000); } catch { return none(); }
+    if (!["page_view", "product_view", "add_to_cart", "checkout_start", "search"].includes(b.type) || typeof b.sid !== "string" || !/^[a-f0-9]{16,40}$/.test(b.sid)) return none();
+    const row = {
+      event_type: b.type, session_id: b.sid,
+      path: typeof b.path === "string" && /^\/[\w\-/.]{0,119}$/.test(b.path) && !b.path.startsWith("/admin") ? b.path : null,
+      device: /ipad|tablet/i.test(ua) ? "tablet" : /mobi|android|iphone/i.test(ua) ? "mobile" : "desktop",
+      product_id: typeof b.productId === "string" && UUID_RE.test(b.productId) ? b.productId.toLowerCase() : null,
+      term: b.type === "search" && typeof b.term === "string" ? b.term.trim().toLowerCase().slice(0, 40) || null : null,
+      referrer: typeof b.ref === "string" && /^[a-z0-9.-]{3,80}$/i.test(b.ref) && !b.ref.endsWith(ctx.url.hostname) ? b.ref.toLowerCase() : null,
+    };
+    try { await db.insert("analytics_events", [row]); } catch { /* analytics nunca quebra a loja */ }
+    return none();
+  });
 
   // ---------- Cliente ----------
   R("GET", "/api/me", "user", async (ctx) => {
@@ -541,6 +563,15 @@ export function createApp({
     });
   });
 
+  adm("GET", "/analytics", async (ctx, _p, url) => {
+    const to = url.searchParams.get("to") ? isoDate(url.searchParams.get("to"), "to") : now().toISOString();
+    const from = url.searchParams.get("from") ? isoDate(url.searchParams.get("from"), "from") : new Date(Date.parse(to) - 30 * 864e5).toISOString();
+    if (Date.parse(from) >= Date.parse(to) || Date.parse(to) - Date.parse(from) > 400 * 864e5) throw bad("Período inválido (máx. 400 dias).");
+    const bucket = ["day", "week", "month"].includes(url.searchParams.get("bucket")) ? url.searchParams.get("bucket") : "day";
+    const data = await db.rpc("admin_analytics", { p_from: from, p_to: to, p_tz: "America/Sao_Paulo", p_bucket: bucket });
+    return json({ ...data, generated_at: now().toISOString() });
+  });
+
   const XV = XBOX_VERSIONS;
   const PF = (b, partial) => {
     const o = {},
@@ -676,6 +707,37 @@ export function createApp({
       price_cents: p.price_cents,
     });
     return json(p, 201);
+  });
+  // Edição em massa (sem transação no REST: pode aplicar parcialmente se falhar no meio)
+  adm("POST", "/products-bulk", async (ctx, _p, _u, a) => {
+    const b = await readJson(ctx.request, 20000), c = b.changes || {}, o = {};
+    const ids = [...new Set(Array.isArray(b.ids) ? b.ids.map((x) => uuid(x)) : [])];
+    if (!ids.length || ids.length > 200) throw bad("Selecione de 1 a 200 produtos.");
+    for (const k of ["is_active", "is_featured", "is_new", "is_upsell"]) if (k in c) o[k] = bool(c[k]);
+    if ("category_id" in c) o.category_id = c.category_id ? uuid(c.category_id, "categoria") : null;
+    if ("platform" in c) o.platform = str(c.platform, "Plataforma", { max: 60 });
+    if ("max_per_order" in c) o.max_per_order = int(c.max_per_order, "Máx. por pedido", { min: 1, max: 10, required: true });
+    const pn = (k, lo, hi) => { if (c[k] === undefined || c[k] === null || c[k] === "") return null; const n = Number(c[k]); if (!Number.isFinite(n) || n < lo || n > hi) throw bad("Valor inválido: " + k); return n; };
+    const adj = pn("price_adjust_pct", -90, 500), promo = pn("promo_pct", 1, 90), clr = c.clear_promo === true;
+    if (!Object.keys(o).length && adj === null && promo === null && !clr) throw bad("Nada para alterar.");
+    const perItem = adj !== null || promo !== null;
+    if (perItem && ids.length > 40) throw bad("Para alterar preços, selecione até 40 produtos por vez.");
+    if (clr) Object.assign(o, { promo_price_cents: null, promo_starts_at: null, promo_ends_at: null });
+    let n = 0;
+    try {
+      if (!perItem) n = (await db.update("products", { id: `in.(${ids.join(",")})`, archived_at: "is.null" }, o)).length;
+      else {
+        const { rows } = await db.select("products", { filters: { id: `in.(${ids.join(",")})`, archived_at: "is.null" }, select: "id,price_cents,promo_price_cents", limit: 40 });
+        for (const p of rows) {
+          const patch = { ...o }; let price = p.price_cents;
+          if (adj !== null) { price = Math.round(price * (1 + adj / 100)); if (price < 1 || price > 1e8) throw bad("O ajuste gera preço inválido."); patch.price_cents = price; if (!clr && p.promo_price_cents >= price) patch.promo_price_cents = null; }
+          if (promo !== null) { const pp = Math.round(price * (1 - promo / 100)); patch.promo_price_cents = pp >= 1 && pp < price ? pp : null; patch.promo_starts_at = null; patch.promo_ends_at = null; }
+          await db.update("products", { id: "eq." + p.id }, patch); n++;
+        }
+      }
+    } catch (e) { if (e instanceof HttpError) throw e; dbErr(e); }
+    await audit(ctx, a, "product.bulk_update", "product", null, { ids, changes: c, updated: n });
+    return json({ updated: n });
   });
   adm("PATCH", "/products/:id", async (ctx, { id }, _u, a) => {
     uuid(id);
@@ -1078,6 +1140,7 @@ export function createApp({
     for (const k of ALL_SETTING_KEYS)
       if (k in b) {
         let v = String(b[k] ?? "").trim();
+        if (k === "combos_json") v = normCombos(v);
         if (v.length > (LONG_SETTING_KEYS.includes(k) ? 3500 : 1000))
           throw bad(`${k} longo demais.`);
         if (k === "whatsapp_number" && v && !/^\d{10,15}$/.test(v))

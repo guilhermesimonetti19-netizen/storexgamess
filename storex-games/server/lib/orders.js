@@ -36,7 +36,7 @@ function spreadDiscount(items, discount) { // dilui o cupom nas unidades; a soma
   return [...m.values()];
 }
 
-// Preços e combo SEMPRE calculados no servidor (view catalog_products + store_settings); nada do navegador é aceito como preço/total.
+// Preços e combos SEMPRE calculados no servidor (view catalog_products + store_settings); nada do navegador é aceito como preço/total.
 export async function createOrder(ctx, user, body) {
   const key = body?.idempotencyKey;
   if (typeof key !== 'string' || !KEY_RE.test(key)) throw bad('Chave de idempotência inválida.');
@@ -63,7 +63,7 @@ export async function createOrder(ctx, user, body) {
   }
   if (!(subtotal > 0)) throw bad('Total inválido.');
   const cfg = comboConfig(await loadSettings(ctx.db, COMBO_KEYS));
-  const { groups, discount } = applyCombo(lines.map(l => ({ unit: l.unit_price_cents, quantity: l.quantity })), cfg);
+  const { applied, discount } = applyCombo(lines.map(l => ({ unit: l.unit_price_cents, quantity: l.quantity })), cfg);
   const cp = await couponFor(ctx, user, body?.coupon);
   const couponCents = cp ? Math.floor((subtotal - discount) * cp.percent / 100) : 0;
   const total = subtotal - discount - couponCents;
@@ -73,7 +73,7 @@ export async function createOrder(ctx, user, body) {
   try {
     [order] = await ctx.db.insert('orders', [{ id: crypto.randomUUID(), public_ref: ref, order_nsu: ref, user_id: user.id, idempotency_key: key,
       subtotal_cents: subtotal, discount_cents: discount, coupon_code: cp?.code ?? null, coupon_cents: couponCents,
-      combo_snapshot: groups ? { ...cfg, groups } : null, total_cents: total }]);
+      combo_snapshot: applied.length ? { combos: applied } : null, total_cents: total }]);
   } catch (e) { // clique duplicado concorrente: devolve o pedido já criado
     if (e.code === '23505') { const r = await ctx.db.select('orders', { filters: { user_id: 'eq.' + user.id, idempotency_key: 'eq.' + key }, limit: 1 }); if (r.rows[0]) return r.rows[0]; }
     throw e;

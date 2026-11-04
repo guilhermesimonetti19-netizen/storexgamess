@@ -95,6 +95,8 @@ const P = {
     "M12 3c4 4 8 6 8 10a4 4 0 0 1-7 2.5L14 21h-4l1-5.5A4 4 0 0 1 4 13c0-4 4-6 8-10z",
   club: "M12 3a3.5 3.5 0 0 0-3 5.2A3.8 3.8 0 1 0 11 14l-1 7h4l-1-7a3.8 3.8 0 1 0 2.5-5.8A3.5 3.5 0 0 0 12 3z",
   info: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M12 11v5 M12 8h.01",
+  instagram:
+    "M7 3h10a4 4 0 0 1 4 4v10a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4z M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M17.5 6.5h.01",
 };
 const FILLED = new Set(["diamond", "spade", "club"]);
 export function icon(name, { size = 24, cls = "" } = {}) {

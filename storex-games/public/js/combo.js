@@ -1,2 +1,5 @@
-export const comboCfg = (s = {}) => { const qty = +s.combo_qty, unit = +s.combo_unit_cents, price = +s.combo_price_cents; return s.combo_enabled === '1' && qty >= 2 && unit > 0 && price > 0 && price < qty * unit ? { qty, unit, price } : null; };
-export const comboDiscount = (lines, cfg) => cfg ? Math.floor(lines.filter(l => l.unit === cfg.unit).reduce((n, l) => n + l.qty, 0) / cfg.qty) * (cfg.qty * cfg.unit - cfg.price) : 0;
+const ok = (q, u, p) => q >= 2 && q <= 10 && u > 0 && p > 0 && p < q * u;
+export const comboCfg = (s = {}) => { const l = [], q = +s.combo_qty, u = +s.combo_unit_cents, p = +s.combo_price_cents; if (s.combo_enabled === '1' && ok(q, u, p)) l.push({ qty: q, unit: u, price: p });
+  try { for (const c of JSON.parse(s.combos_json || '[]').slice(0, 20)) { const x = { qty: +c.qty, unit: +c.unit, price: +c.price }; if (c.on !== false && ok(x.qty, x.unit, x.price)) l.push(x); } } catch { /* */ } return l; };
+export const comboDiscount = (lines, cfgs) => { const left = new Map(); for (const l of lines) left.set(l.unit, (left.get(l.unit) || 0) + l.qty); let d = 0;
+  for (const c of [...cfgs].sort((a, b) => a.price / a.qty - b.price / b.qty)) { const n = left.get(c.unit) || 0, g = Math.floor(n / c.qty); if (!g) continue; left.set(c.unit, n - g * c.qty); d += g * (c.qty * c.unit - c.price); } return d; };
