@@ -553,18 +553,21 @@ export async function orderPage(ref) {
     const qs = new URLSearchParams(location.search);
     let o = await api("/api/orders/" + encodeURIComponent(ref));
     // Retorno do checkout ≠ prova de pagamento: pedimos ao servidor que confira na InfinitePay.
+    // Com API key a InfinitePay devolve o PRÓPRIO order_nsu (UUID) na URL de retorno; repassamos junto.
     if (
       o.paymentStatus === "pending" &&
-      (qs.get("transaction_nsu") || qs.get("slug"))
+      (qs.get("transaction_nsu") || qs.get("slug") || qs.get("order_nsu"))
     ) {
+      const retorno = {
+        transaction_nsu: qs.get("transaction_nsu"),
+        slug: qs.get("slug"),
+        order_nsu: qs.get("order_nsu"),
+      };
       history.replaceState({}, "", location.pathname);
       try {
         await api(`/api/orders/${ref}/verify`, {
           method: "POST",
-          body: {
-            transaction_nsu: qs.get("transaction_nsu"),
-            slug: qs.get("slug"),
-          },
+          body: retorno,
         });
         o = await api("/api/orders/" + encodeURIComponent(ref));
       } catch (e) {
@@ -593,7 +596,11 @@ export async function orderPage(ref) {
     const parts = [...head, list];
     if (o.discountCents > 0)
       parts.push(
-        h("p", { class: "note" }, "Desconto do combo: -" + money(o.discountCents)),
+        h(
+          "p",
+          { class: "note" },
+          "Desconto do combo: -" + money(o.discountCents),
+        ),
       );
     if (o.couponCents > 0)
       parts.push(

@@ -375,7 +375,8 @@ export function createApp({
     });
     return json({ checkoutUrl: url, testMode: !isConfigured(env) });
   });
-  // Retorno do checkout NÃO prova pagamento: o servidor consulta a InfinitePay; query string só serve de entrada da consulta.
+  // Retorno do checkout NÃO prova pagamento: o servidor consulta a InfinitePay.
+  // Os parâmetros da URL de retorno (order_nsu do provedor, transaction_nsu, slug) servem só de entrada da consulta.
   R("POST", "/api/orders/:ref/verify", "user", async (ctx, { ref }) => {
     const u = await requireUser(ctx);
     const { order } = await getOwnOrder(ctx, u, ref);
@@ -385,7 +386,9 @@ export function createApp({
       return json({ paid: order.payment_status === "paid", testMode: true });
     const b = await readJson(ctx.request, 2000);
     const r = await verifyAndApply(ctx, {
+      ref: order.public_ref,
       orderNsu: order.order_nsu,
+      providerNsu: str(b.order_nsu, "order_nsu", { max: 80 }),
       transactionNsu: str(b.transaction_nsu, "transaction_nsu", { max: 80 }),
       slug: str(b.slug, "slug", { max: 80 }),
       source: "verify",
@@ -439,8 +442,8 @@ export function createApp({
       throw new HttpError(401, "unauthorized", "Não autorizado.");
     const b = await readJson(ctx.request, 20_000);
 
-    // Diagnóstico temporário e sem segredos: permite comparar o payload real
-    // recebido da InfinitePay com order_nsu/transaction_nsu salvos no Supabase.
+    // Diagnóstico sem segredos: compara o payload real recebido da InfinitePay
+    // com order_nsu/transaction_nsu salvos no Supabase.
     // Não registrar receipt_url, dados do comprador, headers ou query string.
     console.info("infinitepay_webhook_received", {
       order_nsu: typeof b?.order_nsu === "string" ? b.order_nsu.slice(0, 80) : null,
@@ -451,13 +454,20 @@ export function createApp({
       paid_amount: Number.isFinite(Number(b?.paid_amount)) ? Number(b.paid_amount) : null,
       event: typeof b?.event === "string" ? b.event.slice(0, 40) : null,
       status: typeof b?.status === "string" ? b.status.slice(0, 40) : null,
+      has_ref: Boolean(ctx.url.searchParams.get("ref")),
       payload_keys: b && typeof b === "object" && !Array.isArray(b) ? Object.keys(b).sort() : [],
     });
 
-    if (typeof b?.order_nsu !== "string" || b.order_nsu.length > 40)
-      return json({ ok: false, ignored: true }, 200);
+    // Com API key a InfinitePay troca o order_nsu por um UUID próprio.
+    // O nosso código do pedido vai na própria URL do webhook (?ref=SX...).
+    const refParam = ctx.url.searchParams.get("ref");
+    const ref = refParam && /^[A-Z0-9]{6,30}$/.test(refParam) ? refParam : null;
+    const hasNsu = typeof b?.order_nsu === "string" && b.order_nsu.length <= 80;
+    if (!hasNsu && !ref) return json({ ok: false, ignored: true }, 200);
     const r = await verifyAndApply(ctx, {
-      orderNsu: b.order_nsu,
+      ref,
+      orderNsu: hasNsu ? b.order_nsu : null,
+      providerNsu: hasNsu ? b.order_nsu : null,
       transactionNsu: str(b.transaction_nsu, "x", { max: 80 }),
       slug: str(b.invoice_slug ?? b.slug, "x", { max: 80 }),
       source: "webhook",
@@ -1089,6 +1099,7 @@ export function createApp({
         "InfinitePay não configurada.",
       );
     const r = await verifyAndApply(ctx, {
+      ref: rows[0].public_ref,
       orderNsu: rows[0].order_nsu,
       transactionNsu: rows[0].transaction_nsu,
       slug: rows[0].invoice_slug,
@@ -1119,6 +1130,7 @@ export function createApp({
     for (const o of rows) {
       const r = isConfigured(env)
         ? await verifyAndApply(ctx, {
+            ref: o.public_ref,
             orderNsu: o.order_nsu,
             transactionNsu: o.transaction_nsu,
             slug: o.invoice_slug,
