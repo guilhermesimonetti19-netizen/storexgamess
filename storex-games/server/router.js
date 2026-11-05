@@ -438,7 +438,23 @@ export function createApp({
     )
       throw new HttpError(401, "unauthorized", "Não autorizado.");
     const b = await readJson(ctx.request, 20_000);
-    if (typeof b.order_nsu !== "string" || b.order_nsu.length > 40)
+
+    // Diagnóstico temporário e sem segredos: permite comparar o payload real
+    // recebido da InfinitePay com order_nsu/transaction_nsu salvos no Supabase.
+    // Não registrar receipt_url, dados do comprador, headers ou query string.
+    console.info("infinitepay_webhook_received", {
+      order_nsu: typeof b?.order_nsu === "string" ? b.order_nsu.slice(0, 80) : null,
+      transaction_nsu: typeof b?.transaction_nsu === "string" ? b.transaction_nsu.slice(0, 80) : null,
+      invoice_slug: typeof b?.invoice_slug === "string" ? b.invoice_slug.slice(0, 80) : null,
+      slug: typeof b?.slug === "string" ? b.slug.slice(0, 80) : null,
+      amount: Number.isFinite(Number(b?.amount)) ? Number(b.amount) : null,
+      paid_amount: Number.isFinite(Number(b?.paid_amount)) ? Number(b.paid_amount) : null,
+      event: typeof b?.event === "string" ? b.event.slice(0, 40) : null,
+      status: typeof b?.status === "string" ? b.status.slice(0, 40) : null,
+      payload_keys: b && typeof b === "object" && !Array.isArray(b) ? Object.keys(b).sort() : [],
+    });
+
+    if (typeof b?.order_nsu !== "string" || b.order_nsu.length > 40)
       return json({ ok: false, ignored: true }, 200);
     const r = await verifyAndApply(ctx, {
       orderNsu: b.order_nsu,

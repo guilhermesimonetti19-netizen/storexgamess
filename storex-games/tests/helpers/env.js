@@ -24,7 +24,7 @@ export function setup({ env = {}, extraFetch } = {}) {
     url = String(url); const hdr = init.headers || {}; const auth = hdr.Authorization || '';
     if (url.endsWith('/auth/v1/user')) { const tok = auth.replace('Bearer ', ''); const u = Object.values(U).find(x => 'tok-' + x.id === tok); return u ? Response.json({ id: u.id, email: u.email, email_confirmed_at: u.unconfirmed ? null : '2026-01-01' }) : new Response('{}', { status: 401 }); }
     if (url.endsWith('/links')) { log.ip.push(['links', JSON.parse(init.body)]); return state.ipDown ? new Response('x', { status: 500 }) : Response.json({ url: 'https://checkout.infinitepay.io/loja_teste/abc123' }); }
-    if (url.endsWith('/payment_check')) { const b = JSON.parse(init.body); log.ip.push(['check', b]); if (state.ipDown) return new Response('x', { status: 500 }); return Response.json({ success: true, paid: state.paid, amount: state.amount ?? state.orderTotal(b.order_nsu), paid_amount: (state.amount ?? state.orderTotal(b.order_nsu)) + 50, capture_method: 'pix' }); }
+    if (url.endsWith('/payment_check')) { const b = JSON.parse(init.body); log.ip.push(['check', b, hdr]); if (state.ipDown) return new Response('x', { status: 500 }); return Response.json({ success: true, paid: state.paid, amount: state.amount ?? state.orderTotal(b.order_nsu), paid_amount: (state.amount ?? state.orderTotal(b.order_nsu)) + 50, capture_method: 'pix' }); }
     if (url.includes('/storage/v1/object/')) { log.ip.push(['storage', init.method, url]); return new Response('{}', { status: 200 }); }
     if (extraFetch) return extraFetch(url, init); throw new Error('fetch inesperado: ' + url);
   };

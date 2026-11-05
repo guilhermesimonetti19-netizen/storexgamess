@@ -1,7 +1,7 @@
 // Integração InfinitePay (Checkout Integrado) — conforme a documentação pública:
 //  POST https://api.checkout.infinitepay.io/links           (cria link)
 //  POST https://api.checkout.infinitepay.io/payment_check   (confere pagamento)
-// Com INFINITEPAY_API_KEY (header X-Api-Key) o link é criado sem pedir endereço de entrega.
+// A API Key deve ser enviada no header X-Api-Key tanto na criação do link (options) quanto no payment_check.
 const BASE = 'https://api.checkout.infinitepay.io';
 export const isConfigured = env => Boolean(env.INFINITEPAY_HANDLE);
 
@@ -28,7 +28,14 @@ export async function paymentCheck(env, fetchImpl, { orderNsu, transactionNsu, s
   const body = { handle: env.INFINITEPAY_HANDLE, order_nsu: orderNsu };
   if (transactionNsu) body.transaction_nsu = transactionNsu;
   if (slug) body.slug = slug;
-  const res = await fetchImpl(`${BASE}/payment_check`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const res = await fetchImpl(`${BASE}/payment_check`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(env.INFINITEPAY_API_KEY ? { 'X-Api-Key': env.INFINITEPAY_API_KEY } : {}),
+    },
+    body: JSON.stringify(body),
+  });
   if (!res.ok) throw new Error('infinitepay_check_' + res.status);
   const d = await res.json().catch(() => ({}));
   return { paid: d.success !== false && d.paid === true, amount: Number.isFinite(Number(d.amount)) ? Number(d.amount) : null,
