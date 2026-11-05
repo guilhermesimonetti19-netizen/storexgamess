@@ -197,9 +197,11 @@ export async function ensureCheckout(ctx, order) {
     filters: { order_id: "eq." + order.id },
   });
   const base = ctx.env.APP_BASE_URL.replace(/\/$/, "");
+  // Com API key a InfinitePay troca o order_nsu por um UUID próprio.
+  // O nosso código do pedido (ref) vai na própria URL do webhook para identificarmos o pedido.
   const qp = new URLSearchParams();
   if (ctx.env.WEBHOOK_SECRET) qp.set("t", ctx.env.WEBHOOK_SECRET);
-  qp.set("ref", order.public_ref); // a InfinitePay (com API key) troca o order_nsu; o ref identifica o nosso pedido
+  qp.set("ref", order.public_ref);
   const plain = checkoutItems(
     items.map((i) => ({
       name: i.name_snapshot,
