@@ -619,7 +619,7 @@ export async function orderPage(ref) {
           h(
             "p",
             {},
-            "Próximo passo: fale com o vendedor no WhatsApp para receber seu produto.",
+            "Resgate seu produto e siga as instruções, se tiver dúvida aperte abaixo.",
           ),
         ),
       );
