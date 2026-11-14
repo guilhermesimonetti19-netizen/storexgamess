@@ -3355,3 +3355,17 @@ tr:last-child td {
   text-align: center;
   white-space: normal;
 }
+/* ===== carrinho: "Leve também" compacto + botão de finalizar sempre visível ===== */
+.upsell .grid{grid-template-columns:repeat(2,1fr);gap:8px}
+.upsell .pc-media{aspect-ratio:1/1}
+.upsell .pc-badges,.upsell .tag{display:none}
+.upsell .pc-body{padding:8px 52px 10px 8px;gap:4px}
+.upsell .pc-body h3{font-size:.8rem;min-height:2.6em}
+.upsell .price strong{font-size:.95rem}
+.upsell .pc-add{width:34px;height:34px;right:8px;bottom:8px}
+@media (min-width:600px){.upsell .grid{grid-template-columns:repeat(4,1fr)}}
+.summary{
+  position:sticky;bottom:0;z-index:20;
+  background:#0a140f linear-gradient(160deg,rgba(43,255,136,.08),rgba(139,92,246,.08));
+}
+@media (max-width:767px){.summary{padding:12px 84px 12px 14px;border-radius:16px 16px 0 0}.summary .note{display:none}}

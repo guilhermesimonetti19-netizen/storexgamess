@@ -543,6 +543,7 @@ export function createApp({
     const { rows: paidRows } = await db.select("orders", {
       filters: {
         payment_status: "eq.paid",
+        is_test: "eq.false",
         paid_at: "gte." + from,
         and: `(paid_at.lt.${to})`,
       },
@@ -968,7 +969,7 @@ export function createApp({
       offset: (page - 1) * 20,
       count: true,
       select:
-        "id,public_ref,created_at,total_cents,status,payment_status,delivery_status,paid_at",
+        "id,public_ref,created_at,total_cents,status,payment_status,delivery_status,paid_at,is_test",
     });
     return json({ items: rows, total: count ?? rows.length, page });
   });
@@ -1052,6 +1053,7 @@ export function createApp({
     }
     if ("cost_cents" in b)
       o.cost_cents = int(b.cost_cents, "Custo", { min: 0, max: 1e8 });
+    if ("is_test" in b) o.is_test = bool(b.is_test);
     if (!Object.keys(o).length) throw bad("Nada para atualizar.");
     const { rows } = await db.select("orders", {
       filters: { id: "eq." + id },
