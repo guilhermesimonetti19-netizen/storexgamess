@@ -868,7 +868,7 @@ export function createApp({
       `${env.SUPABASE_URL.replace(/\/$/, "")}/storage/v1/object/product-images/${path}`,
       {
         method: "POST",
-        headers: { ...svcAuth(env), "Content-Type": ct, "x-upsert": "false" },
+        headers: { ...svcAuth(env), "Content-Type": ct, "x-upsert": "false", "cache-control": "max-age=31536000" },
         body: buf,
       },
     );

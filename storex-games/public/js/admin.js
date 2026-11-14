@@ -228,9 +228,23 @@ async function productForm(path, id) {
       ...server.map(i => fig(i.url, async () => { if (!confirm('Remover imagem?')) return; try { await api(`/api/admin/products/${id}/images/${i.id}`, { method: 'DELETE' }); server.splice(server.indexOf(i), 1); draw(); } catch (er) { toast(er.message, 'err'); } })),
       ...pending.map(i => fig(i.preview, () => { pending.splice(pending.indexOf(i), 1); draw(); }, true)));
     const upload = (pid, file) => api(`/api/admin/products/${pid}/images`, { method: 'POST', raw: file, contentType: file.type });
+    // Reduz a imagem no navegador: máx. 1000 px de largura, WebP qualidade 85 (visualmente igual na loja).
+    async function shrink(file, maxW = 1000, q = 0.85) {
+      try {
+        const bmp = await createImageBitmap(file);
+        const k = Math.min(1, maxW / bmp.width);
+        const w = Math.round(bmp.width * k), hh = Math.round(bmp.height * k);
+        const c = document.createElement('canvas'); c.width = w; c.height = hh;
+        c.getContext('2d').drawImage(bmp, 0, 0, w, hh);
+        const blob = await new Promise(r => c.toBlob(r, 'image/webp', q));
+        if (!blob || blob.type !== 'image/webp' || blob.size >= file.size) return file;
+        return new File([blob], 'img.webp', { type: 'image/webp' });
+      } catch { return file; }
+    }
     async function addFile(file) {
       if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) return toast('Use PNG, JPG ou WebP.', 'err');
-      if (file.size > 2 * 1024 * 1024) return toast('Máximo 2 MB.', 'err');
+      file = await shrink(file);
+      if (file.size > 2 * 1024 * 1024) return toast('Máximo 2 MB após a compressão.', 'err');
       if (server.length + pending.length >= 8) return toast('Máximo de 8 imagens.', 'err');
       try {
         if (id) { const r = await upload(id, file); server.push({ id: r.id, url: r.url }); toast('Imagem enviada.'); }
