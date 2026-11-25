@@ -44,10 +44,15 @@ const SORTS = {
   newest: "created_at.desc",
   bestseller: "bestseller_pos.asc,created_at.desc",
 };
+// URL pública das imagens. Com IMG_BASE_URL (ex.: "/img") as imagens passam pelo proxy com cache
+// da Cloudflare (functions/img/[[path]].js) e quase não geram egress no Supabase.
+// Sem IMG_BASE_URL, usa o Storage do Supabase diretamente.
 const imgUrl = (env, path) =>
-  path
-    ? `${env.SUPABASE_URL.replace(/\/$/, "")}/storage/v1/object/public/product-images/${path}`
-    : null;
+  !path
+    ? null
+    : env.IMG_BASE_URL
+      ? `${env.IMG_BASE_URL.replace(/\/$/, "")}/${path}`
+      : `${env.SUPABASE_URL.replace(/\/$/, "")}/storage/v1/object/public/product-images/${path}`;
 const pubProduct = (env, p) => ({
   ...p,
   image_url: imgUrl(env, p.image_path),
