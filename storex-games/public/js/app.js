@@ -3,6 +3,7 @@ import { api, settings } from './api.js';
 import { consumeHash, isLoggedIn, onAuth } from './auth.js';
 import { cartCount } from './cart.js';
 import { track } from './track.js';
+import { captureRef } from './ref.js';
 import * as shop from './shop.js';
 import * as acc from './account.js';
 
@@ -80,5 +81,6 @@ async function couponPop() {
   document.body.append(pop);
 }
 setTimeout(couponPop, 1500);
+captureRef();
 const hash = consumeHash(); layout();
 if (hash === 'recovery') go('/redefinir-senha', true); else if (hash) { go('/conta', true); } else route();

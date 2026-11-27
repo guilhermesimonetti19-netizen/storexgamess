@@ -76,6 +76,16 @@ function spreadDiscount(items, discount) {
   return [...m.values()];
 }
 
+// Afiliado: código inválido/inativo é ignorado (a compra segue normal); sem auto-indicação.
+export async function affiliateFor(ctx, user, raw) {
+  if (typeof raw !== "string" || !/^[a-z0-9-]{3,30}$/.test(raw)) return null;
+  const { rows } = await ctx.db.select("affiliates", {
+    filters: { code: "eq." + raw, is_active: "eq.true" },
+    limit: 1,
+  });
+  return rows[0] && rows[0].user_id !== user.id ? rows[0] : null;
+}
+
 // Preços e combos SEMPRE calculados no servidor (view catalog_products + store_settings); nada do navegador é aceito como preço/total.
 export async function createOrder(ctx, user, body) {
   const key = body?.idempotencyKey;
@@ -149,6 +159,11 @@ export async function createOrder(ctx, user, body) {
     : 0;
   const total = subtotal - discount - couponCents;
   if (!(total > 0)) throw bad("Total inválido.");
+  const aff = await affiliateFor(ctx, user, body?.ref);
+  const affPct = aff ? Number(aff.percent) : null;
+  const affCents = aff
+    ? Math.floor((total * Math.round(affPct * 100)) / 10000)
+    : 0;
   const ref = randomRef();
   let order;
   try {
@@ -165,6 +180,9 @@ export async function createOrder(ctx, user, body) {
         coupon_cents: couponCents,
         combo_snapshot: applied.length ? { combos: applied } : null,
         total_cents: total,
+        affiliate_id: aff?.id ?? null,
+        affiliate_percent: affPct,
+        affiliate_cents: affCents,
       },
     ]);
   } catch (e) {

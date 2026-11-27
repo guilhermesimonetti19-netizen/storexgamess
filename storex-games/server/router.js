@@ -14,6 +14,7 @@ import {
   cleanTerm,
   csvCell,
   randomHex,
+  randomRef,
   UUID_RE,
 } from "./lib/util.js";
 import { createDb } from "./lib/db.js";
@@ -578,6 +579,11 @@ export function createApp({
         .sort(([x], [y]) => (x < y ? -1 : 1))
         .map(([d, cents]) => ({ d, cents })),
     };
+        const { rows: affOs } = await db.select("orders", {
+      filters: { affiliate_id: "not.is.null", payment_status: "eq.paid", is_test: "eq.false", paid_at: "gte." + from, and: `(paid_at.lt.${to})` },
+      select: "affiliate_cents", limit: 5000,
+    });
+    const affiliates = { commission_cents: affOs.reduce((s, o) => s + o.affiliate_cents, 0), sales: affOs.length };
     const { rows: recent } = await db.select("orders", {
       order: "created_at.desc",
       limit: 10,
@@ -587,6 +593,7 @@ export function createApp({
     return json({
       ...data,
       profit,
+      affiliates,
       net_available: false,
       net_note:
         "Valor líquido depende do extrato da InfinitePay (taxas não são conhecidas pelo sistema).",
@@ -1302,6 +1309,78 @@ export function createApp({
       count: true,
     });
     return json({ items: rows, total: count ?? rows.length, page });
+  });
+
+  // ---------- Afiliados ----------
+  const AFF_RE = /^[a-z0-9-]{3,30}$/;
+  const spDay = (iso) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date(iso));
+  const pctOf = (v) => { const n = Number(v); if (!Number.isFinite(n) || n < 0.01 || n > 90) throw bad("Porcentagem: de 0,01 a 90."); return Math.round(n * 100) / 100; };
+  const affDup = (e) => { if (e.code === "23505") throw new HttpError(409, "conflict", "Esse código ou usuário já é afiliado."); throw e; };
+  const affOrders = (filters, select) =>
+    db.select("orders", { filters: { affiliate_id: "not.is.null", payment_status: "eq.paid", is_test: "eq.false", ...filters }, select, limit: 5000 }).then((r) => r.rows);
+
+  R("GET", "/api/affiliate/me", "user", async (ctx) => {
+    const u = await requireUser(ctx);
+    const { rows } = await db.select("affiliates", { filters: { user_id: "eq." + u.id }, limit: 1 });
+    const a = rows[0];
+    if (!a) throw new HttpError(404, "not_found", "Você não é afiliado.");
+    const os = await affOrders({ affiliate_id: "eq." + a.id }, "affiliate_cents,paid_at");
+    const month = spDay(now().toISOString()).slice(0, 7);
+    const days = new Map();
+    let total = 0, mon = 0;
+    for (const o of os) {
+      total += o.affiliate_cents;
+      const d = spDay(o.paid_at);
+      if (d.startsWith(month)) mon += o.affiliate_cents;
+      const x = days.get(d) || { sales: 0, cents: 0 };
+      x.sales++; x.cents += o.affiliate_cents; days.set(d, x);
+    }
+    const series = [];
+    for (let i = 29; i >= 0; i--) { const d = spDay(new Date(now().getTime() - i * 864e5).toISOString()); series.push({ d, ...(days.get(d) || { sales: 0, cents: 0 }) }); }
+    return json({
+      code: a.code, percent: Number(a.percent), active: a.is_active,
+      link: `${env.APP_BASE_URL.replace(/\/$/, "")}/?ref=${a.code}`,
+      sales: os.length, commission_cents: total, month_commission_cents: mon, series,
+    });
+  });
+
+  adm("GET", "/affiliates", async (ctx, _p, url) => {
+    const from = isoDate(url.searchParams.get("from") || "2020-01-01T00:00:00Z", "from");
+    const to = url.searchParams.get("to") ? isoDate(url.searchParams.get("to"), "to") : now().toISOString();
+    const { rows: affs } = await db.select("affiliates", { order: "created_at.desc", limit: 500 });
+    const os = await affOrders({ paid_at: "gte." + from, and: `(paid_at.lt.${to})` }, "affiliate_id,total_cents,affiliate_cents");
+    const m = new Map();
+    for (const o of os) { const x = m.get(o.affiliate_id) || { sales: 0, revenue_cents: 0, commission_cents: 0 }; x.sales++; x.revenue_cents += o.total_cents; x.commission_cents += o.affiliate_cents; m.set(o.affiliate_id, x); }
+    const items = affs.map((a) => ({ ...a, percent: Number(a.percent), ...(m.get(a.id) || { sales: 0, revenue_cents: 0, commission_cents: 0 }) }));
+    const sum = (k) => items.reduce((s, i) => s + i[k], 0);
+    return json({ items, totals: { sales: sum("sales"), revenue_cents: sum("revenue_cents"), commission_cents: sum("commission_cents") } });
+  });
+  adm("POST", "/affiliates", async (ctx, _p, _u, a) => {
+    const b = await readJson(ctx.request, 1000);
+    const email = str(b.email, "E-mail", { max: 200, required: true }).toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw bad("E-mail inválido.");
+    const percent = pctOf(b.percent);
+    const code = b.code ? slugify(b.code) : randomRef("", 6).toLowerCase();
+    if (!AFF_RE.test(code)) throw bad("Código: 3 a 30 letras minúsculas, números ou hífen.");
+    const uid = await db.rpc("find_user_by_email", { p_email: email });
+    if (!uid) throw new HttpError(404, "not_found", "Nenhum usuário com esse e-mail. A pessoa precisa criar a conta antes.");
+    let row;
+    try { [row] = await db.insert("affiliates", [{ user_id: uid, email, code, percent }]); } catch (e) { affDup(e); }
+    await audit(ctx, a, "affiliate.create", "affiliate", row.id, { code, percent });
+    return json(row, 201);
+  });
+  adm("PATCH", "/affiliates/:id", async (ctx, { id }, _u, a) => {
+    uuid(id);
+    const b = await readJson(ctx.request, 1000), o = {};
+    if ("percent" in b) o.percent = pctOf(b.percent);
+    if ("code" in b) { const c = slugify(b.code); if (!AFF_RE.test(c)) throw bad("Código: 3 a 30 letras minúsculas, números ou hífen."); o.code = c; }
+    if ("is_active" in b) o.is_active = bool(b.is_active);
+    if (!Object.keys(o).length) throw bad("Nada para atualizar.");
+    let r;
+    try { [r] = await db.update("affiliates", { id: "eq." + id }, o); } catch (e) { affDup(e); }
+    if (!r) throw new HttpError(404, "not_found", "Afiliado não encontrado.");
+    await audit(ctx, a, "affiliate.update", "affiliate", id, o);
+    return json(r);
   });
 
   return async function handle(request) {

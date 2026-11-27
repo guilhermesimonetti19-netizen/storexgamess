@@ -25,6 +25,26 @@ import {
   logout,
   isLoggedIn,
 } from "./auth.js";
+import { affiliatePanel } from "./aff-panel.js";
+
+// Transforma URLs do texto em links clicáveis (sem HTML bruto: só nós DOM criados via h()).
+const URL_RE = /https?:\/\/[^\s<>"']+/gi;
+function linkify(text) {
+  const out = [];
+  let last = 0;
+  for (const m of text.matchAll(URL_RE)) {
+    let url = m[0];
+    const trail = url.match(/[.,;:!?)\]]+$/)?.[0] || "";
+    if (trail) url = url.slice(0, -trail.length);
+    if (m.index > last) out.push(text.slice(last, m.index));
+    out.push(
+      h("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, url),
+    );
+    last = m.index + url.length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
 
 let _id = 0;
 const fieldIcon = (label, ic, input, extra, hint) => {
@@ -419,9 +439,10 @@ export async function account() {
   if (!isLoggedIn()) return go("/entrar?next=/conta", true);
   mount(loading());
   try {
-    const [me, orders] = await Promise.all([
+    const [me, orders, aff] = await Promise.all([
       api("/api/me"),
       api("/api/orders"),
+      api("/api/affiliate/me").catch(() => null),
     ]);
     const name = h("input", {
         type: "text",
@@ -446,6 +467,7 @@ export async function account() {
           !me.confirmed && " (e-mail não confirmado)",
         ),
         me.isAdmin && a("/admin", { class: "btn" }, "Painel administrativo"),
+        aff && affiliatePanel(aff),
         h(
           "form",
           {
@@ -653,7 +675,7 @@ export async function orderPage(ref) {
             "O WhatsApp do vendedor ainda não foi configurado. Use a página de contato.",
           ),
         );
-      // Pós-compra: somente o campo de instruções.
+      // Pós-compra: somente o campo de instruções (URLs viram links clicáveis).
       for (const i of o.items) {
         const t = i.instructions?.instructions;
         if (t)
@@ -665,7 +687,7 @@ export async function orderPage(ref) {
               ...t
                 .split("\n")
                 .filter(Boolean)
-                .map((x) => h("p", {}, x)),
+                .map((x) => h("p", {}, linkify(x))),
             ),
           );
       }

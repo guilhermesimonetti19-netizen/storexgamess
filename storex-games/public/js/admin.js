@@ -3,7 +3,7 @@ import { api } from './api.js';
 import { isLoggedIn } from './auth.js';
 import { FAQ, STEPS } from './shop.js';
 
-const NAV = [['/admin', 'Dashboard', 'bolt'], ['/admin/analytics', 'Analytics', 'eye'], ['/admin/produtos', 'Produtos', 'package'], ['/admin/mais-vendidos', 'Mais vendidos', 'star'], ['/admin/pedidos', 'Pedidos', 'receipt'], ['/admin/relatorios', 'Relatórios', 'tag'], ['/admin/cupons', 'Cupons', 'tag'], ['/admin/configuracoes', 'Configurações', 'key'], ['/admin/auditoria', 'Auditoria', 'clock']];
+const NAV = [['/admin', 'Dashboard', 'bolt'], ['/admin/analytics', 'Analytics', 'eye'], ['/admin/produtos', 'Produtos', 'package'], ['/admin/mais-vendidos', 'Mais vendidos', 'star'], ['/admin/pedidos', 'Pedidos', 'receipt'], ['/admin/relatorios', 'Relatórios', 'tag'], ['/admin/cupons', 'Cupons', 'tag'],  ['/admin/afiliados', 'Afiliados', 'user'], ['/admin/configuracoes', 'Configurações', 'key'], ['/admin/auditoria', 'Auditoria', 'clock']];
 const shell = (path, ...content) => mount(h('div', { class: 'wrap page admin' }, h('nav', { class: 'admin-nav', 'aria-label': 'Administração' }, NAV.map(([p, t, ic]) => a(p, { 'aria-current': (p === '/admin' ? path === p : path.startsWith(p)) ? 'page' : null }, icon(ic, { size: 18 }), t))), h('section', { class: 'admin-main' }, content)));
 const tbl = (cols, rows) => rows.length ? h('div', { class: 'table-wrap' }, h('table', {}, h('thead', {}, h('tr', {}, cols.map(c => h('th', { scope: 'col' }, c)))), h('tbody', {}, rows))) : empty('Nenhum registro.');
 const pager = (r, fn) => h('nav', { class: 'pager' }, r.page > 1 && h('button', { class: 'btn', onclick: () => fn(r.page - 1) }, '←'), h('span', {}, `Página ${r.page} • ${r.total} registro(s)`), r.page * (r.pageSize || 20) < r.total && h('button', { class: 'btn', onclick: () => fn(r.page + 1) }, '→'));
@@ -25,6 +25,7 @@ export async function admin(path) {
   if ((m = path.match(/^\/admin\/pedidos\/([0-9a-f-]{36})$/))) return orderDetail(path, m[1]);
   if (path === '/admin/relatorios') return reports(path);
   if (path === '/admin/cupons') return couponsPage(path);
+  if (path === '/admin/afiliados') return affiliatesPage(path);
   if (path === '/admin/configuracoes') return settingsPage(path);
   if (path === '/admin/auditoria') return auditPage(path);
   mount(h('p', { class: 'state' }, 'Página administrativa não encontrada.'));
@@ -94,7 +95,8 @@ async function dashboard(path) {
         h('div', { class: 'kpis' },
           kpi('Custo (pedidos com custo)', money(d.profit.cost_cents), d.profit.missing_cost ? `${d.profit.missing_cost} pedido(s) sem custo informado` : 'Todos com custo', 'package', 1),
           kpi('Lucro', money(d.profit.profit_cents), 'Faturamento − custo', 'star', 1),
-          kpi('Margem', d.profit.revenue_cents ? Math.round(d.profit.profit_cents / d.profit.revenue_cents * 100) + '%' : '—', 'Lucro ÷ faturamento', 'tag', 1)),
+          kpi('Margem', d.profit.revenue_cents ? Math.round(d.profit.profit_cents / d.profit.revenue_cents * 100) + '%' : '—', 'Lucro ÷ faturamento', 'tag', 1),
+          kpi('Comissões de afiliados', money(d.affiliates.commission_cents), `${d.affiliates.sales} venda(s) no período`, 'user', 1)),
         h('div', { class: 'charts' },
           lineChart('Faturamento por ' + ({ day: 'dia', week: 'semana', month: 'mês' })[bucket] + ' (R$)', d.revenue_series.map(x => ({ l: x.d, v: x.cents / 100 })), R),
           lineChart('Lucro por ' + ({ day: 'dia', week: 'semana', month: 'mês' })[bucket] + ' (R$)', d.profit.series.map(x => ({ l: x.d, v: x.cents / 100 })), R),
@@ -354,6 +356,32 @@ async function couponsPage(path) {
       tbl(['Código', 'Desconto', ''], rows.map(c => h('tr', {}, h('td', {}, c.code), h('td', {}, c.percent + '%'), h('td', {}, h('button', { class: 'btn btn-danger', type: 'button', onclick: async () => { if (!confirm('Excluir o cupom ' + c.code + '?')) return; try { await api('/api/admin/coupons/' + c.code, { method: 'DELETE' }); load(); } catch (er) { toast(er.message, 'err'); } } }, 'Excluir'))))));
   } catch (er) { out.replaceChildren(errorBox(er.message, load)); } }
   load();
+}
+
+// ---------- Afiliados ----------
+async function affiliatesPage(path) {
+  let preset = '30d'; const out = h('div', {}, loading());
+  const range = () => { const end = new Date(); const f = preset === 'all' ? new Date('2020-01-01') : preset === 'month' ? spStart(spDay().slice(0, 8) + '01') : new Date(end - 30 * 864e5); return { from: f.toISOString(), to: end.toISOString() }; };
+  const btns = [['30d', '30 dias'], ['month', 'Mês atual'], ['all', 'Tudo']].map(([k, t]) => h('button', { class: 'btn' + (k === preset ? ' btn-primary' : ''), type: 'button', 'data-k': k, onclick: () => { preset = k; btns.forEach(b => b.classList.toggle('btn-primary', b.dataset.k === k)); load(); } }, t));
+  const email = h('input', { type: 'email', required: true, placeholder: 'email@do-afiliado.com' }), code = h('input', { type: 'text', maxlength: 30, placeholder: 'ex.: joao (vazio = automático)' }), pc = h('input', { type: 'number', step: '0.01', min: '0.01', max: '90', value: 10, required: true });
+  const form = h('form', { class: 'form card', onsubmit: async e => { e.preventDefault(); try { await api('/api/admin/affiliates', { method: 'POST', body: { email: email.value, code: code.value, percent: Number(pc.value) } }); toast('Afiliado adicionado.'); email.value = ''; code.value = ''; load(); } catch (er) { toast(er.message, 'err'); } } },
+    field('E-mail do usuário (já cadastrado na loja)', email), field('Código do link', code, 'O link fica seusite.com/?ref=CODIGO'), field('Comissão (%) sobre o total pago', pc), h('button', { class: 'btn btn-primary', type: 'submit' }, 'Adicionar afiliado'));
+  const patch = async (a, body) => { try { await api('/api/admin/affiliates/' + a.id, { method: 'PATCH', body }); load(); } catch (er) { toast(er.message, 'err'); } };
+  const lnk = a => location.origin + '/?ref=' + a.code;
+  async function load() {
+    try {
+      const r = range(), d = await api(`/api/admin/affiliates?from=${encodeURIComponent(r.from)}&to=${encodeURIComponent(r.to)}`);
+      out.replaceChildren(
+        h('div', { class: 'kpis' }, kpi('Comissões no período (a pagar por fora)', money(d.totals.commission_cents), null, 'tag', 1), kpi('Vendas por afiliados', String(d.totals.sales), null, 'receipt', 1), kpi('Faturamento por afiliados', money(d.totals.revenue_cents), null, 'star', 1)),
+        tbl(['Afiliado', 'Link', '%', 'Vendas', 'Faturamento', 'Comissão', 'Status', ''], d.items.map(a => h('tr', {}, h('td', {}, a.email), h('td', {}, lnk(a)), h('td', {}, a.percent + '%'), h('td', {}, a.sales), h('td', {}, money(a.revenue_cents)), h('td', {}, money(a.commission_cents)), h('td', {}, a.is_active ? 'Ativo' : 'Inativo'),
+          h('td', {}, h('div', { class: 'row' },
+            h('button', { class: 'btn btn-sm', type: 'button', onclick: async () => { try { await navigator.clipboard.writeText(lnk(a)); toast('Link copiado.'); } catch { toast('Copie: ' + lnk(a), 'err'); } } }, 'Copiar link'),
+            h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { const v = prompt('Nova porcentagem (0,01 a 90). Vale só para vendas futuras:', a.percent); if (v) patch(a, { percent: Number(String(v).replace(',', '.')) }); } }, 'Editar %'),
+            h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { const v = prompt('Novo código do link (minúsculas, números, hífen). O link antigo deixa de valer:', a.code); if (v) patch(a, { code: v }); } }, 'Editar código'),
+            h('button', { class: 'btn btn-sm' + (a.is_active ? ' btn-danger' : ''), type: 'button', onclick: () => patch(a, { is_active: !a.is_active }) }, a.is_active ? 'Desativar' : 'Ativar')))))));
+    } catch (e) { out.replaceChildren(errorBox(e.message, load)); }
+  }
+  shell(path, h('h1', {}, 'Afiliados'), form, h('div', { class: 'row' }, btns), out); load();
 }
 
 async function settingsPage(path) {

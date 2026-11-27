@@ -29,6 +29,7 @@ import {
 import { isLoggedIn } from "./auth.js";
 import { comboCfg, comboDiscount } from "./combo.js";
 import { track } from "./track.js";
+import { getRef } from "./ref.js";
 
 const XBOX_VERSIONS = ["XBOX ONE E SERIES X|S", "XBOX SERIES X|S", "XBOX 360"];
 const T = (tag, cls, ...k) => h(tag, { class: cls }, ...k);
@@ -1410,6 +1411,7 @@ export async function cart() {
             idempotencyKey: idempotencyKey(),
             items: getCart().map((i) => ({ productId: i.id, quantity: i.qty })),
             coupon: cp ? cpIn.value : undefined,
+            ref: getRef(),
           },
         });
         clearCart();
