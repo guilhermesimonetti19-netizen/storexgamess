@@ -154,20 +154,43 @@ export const emptyArt = (title, text, ...actions) =>
       actions.length > 0 && h("div", { class: "row" }, actions),
     ),
   );
-export function setPage(title, { noindex = false, desc } = {}) {
-  document.title = title
-    ? `${title} | StoreX Games`
-    : "StoreX Games — Jogos e produtos digitais";
-  let m = $("meta[name=robots]");
+// ---- SEO: título, descrição, canonical, Open Graph e JSON-LD ----
+const metaP = (attr, key, val) => {
+  let m = $(`meta[${attr}="${key}"]`);
   if (!m) {
-    m = h("meta", { name: "robots" });
+    m = h("meta", { [attr]: key });
     document.head.append(m);
   }
-  m.content = noindex ? "noindex,nofollow" : "index,follow";
+  m.content = val;
+};
+export function setPage(title, { noindex = false, desc } = {}) {
+  const full = title
+    ? `${title} | StoreX Games`
+    : "StoreX Games — Jogos e produtos digitais";
+  document.title = full;
+  $("#ld")?.remove();
+  metaP("name", "robots", noindex ? "noindex,nofollow" : "index,follow");
   if (desc) {
-    const d = $("meta[name=description]");
-    if (d) d.content = desc;
+    metaP("name", "description", desc);
+    metaP("property", "og:description", desc);
   }
+  metaP("property", "og:title", full);
+  metaP("property", "og:url", location.origin + location.pathname);
+  let c = $("link[rel=canonical]");
+  if (!c) {
+    c = h("link", { rel: "canonical" });
+    document.head.append(c);
+  }
+  c.href = location.origin + location.pathname;
+}
+// Script do tipo ld+json não é executado, então a CSP não o bloqueia.
+export function jsonLd(obj) {
+  $("#ld")?.remove();
+  const s = document.createElement("script");
+  s.type = "application/ld+json";
+  s.id = "ld";
+  s.textContent = JSON.stringify(obj);
+  document.head.append(s);
 }
 export function toast(msg, kind = "ok") {
   const t = h(

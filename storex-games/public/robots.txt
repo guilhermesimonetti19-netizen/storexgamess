@@ -4,3 +4,4 @@ Disallow: /admin
 Disallow: /conta
 Disallow: /pedido/
 Disallow: /api/
+Sitemap: https://storexgames.com.br/sitemap.xml

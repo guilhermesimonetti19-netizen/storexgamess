@@ -4,6 +4,7 @@ import {
   money,
   mount,
   setPage,
+  jsonLd,
   loading,
   errorBox,
   empty,
@@ -350,6 +351,28 @@ const secHead = (eyebrow, title, extra) =>
 export async function home() {
   setPage("", {
     desc: "StoreX Games: jogos para Xbox, PC / Steam, packs e assinaturas digitais. Checkout seguro e atendimento via WhatsApp.",
+  });
+  jsonLd({
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        name: "StoreX Games",
+        url: location.origin,
+        logo: location.origin + "/assets/logo.webp",
+        sameAs: ["https://www.instagram.com/storexgamess"],
+      },
+      {
+        "@type": "WebSite",
+        name: "StoreX Games",
+        url: location.origin,
+        potentialAction: {
+          "@type": "SearchAction",
+          target: location.origin + "/produtos?q={search_term_string}",
+          "query-input": "required name=search_term_string",
+        },
+      },
+    ],
   });
   const st = await settings();
   // Conteúdo editável pelo admin (Configurações). Campo vazio = texto padrão.
@@ -1151,6 +1174,27 @@ export async function product(slug) {
       desc:
         (p.long_description || "").replace(/\s+/g, " ").slice(0, 160) ||
         undefined,
+    });
+    jsonLd({
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: p.name,
+      description: (p.long_description || p.name)
+        .replace(/\s+/g, " ")
+        .slice(0, 300),
+      image: (p.images?.length ? p.images : [p.image_url])
+        .filter(Boolean)
+        .map((u) => new URL(u, location.origin).href),
+      category: p.category_name || undefined,
+      offers: {
+        "@type": "Offer",
+        url: location.href,
+        priceCurrency: "BRL",
+        price: (p.effective_price_cents / 100).toFixed(2),
+        availability: p.in_stock
+          ? "https://schema.org/InStock"
+          : "https://schema.org/OutOfStock",
+      },
     });
     const imgs = p.images?.length ? p.images : [];
     const main = imgOrPlaceholder(
