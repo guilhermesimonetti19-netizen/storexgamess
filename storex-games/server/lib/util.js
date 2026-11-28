@@ -11,7 +11,7 @@ export const bad = (msg, extra) => new HttpError(422, 'validation', msg, extra);
 export function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), { status, headers: {
     'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
-    'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin', ...headers } });
+    'X-Content-Type-Options': 'nosniff', 'X-Robots-Tag': 'noindex', 'Referrer-Policy': 'same-origin', ...headers } });
 }
 export function randomRef(prefix = 'SX', len = 14) {
   const b = crypto.getRandomValues(new Uint8Array(len));
